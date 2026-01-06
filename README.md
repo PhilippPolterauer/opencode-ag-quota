@@ -2,6 +2,10 @@
 
 An Opencode TUI plugin and CLI tool to display remaining Antigravity model quotas.
 
+![Quota Display Example](docs/example.png)
+
+> **⚠️ Requirement**: Antigravity should be running in the background for this tool to retrieve quota data.
+
 ## Features
 
 - **TUI Integration**: Displays remaining quota information inside the Opencode TUI.
