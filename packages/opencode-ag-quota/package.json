@@ -1,0 +1,59 @@
+{
+  "name": "opencode-ag-quota",
+  "version": "0.0.1",
+  "description": "Opencode plugin to display Antigravity/Windsurf quotas",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "bun run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "antigravity",
+    "windsurf",
+    "quota",
+    "codeium"
+  ],
+  "author": "Philipp",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phibkro/opencode-quota-display.git",
+    "directory": "packages/opencode-ag-quota"
+  },
+  "bugs": {
+    "url": "https://github.com/phibkro/opencode-quota-display/issues"
+  },
+  "homepage": "https://github.com/phibkro/opencode-quota-display/tree/main/packages/opencode-ag-quota#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ag-quota": "^0.0.1"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.1.3",
+    "@opencode-ai/sdk": "^1.1.3",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.0.0"
+  }
+}

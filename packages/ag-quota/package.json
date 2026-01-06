@@ -1,0 +1,57 @@
+{
+  "name": "ag-quota",
+  "version": "0.0.1",
+  "description": "Antigravity quota fetching library and CLI",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ag-quota": "./bin/ag-quota.js"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bun run build:lib && bun run build:cli",
+    "build:lib": "tsc",
+    "build:cli": "bun build src/cli.ts --outfile bin/ag-quota.js --target node",
+    "prepublishOnly": "bun run build",
+    "typecheck": "tsc --noEmit",
+    "ag-quota": "bun src/cli.ts"
+  },
+  "keywords": [
+    "antigravity",
+    "quota",
+    "windsurf",
+    "codeium",
+    "cli"
+  ],
+  "author": "Philipp",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phibkro/opencode-quota-display.git",
+    "directory": "packages/ag-quota"
+  },
+  "bugs": {
+    "url": "https://github.com/phibkro/opencode-quota-display/issues"
+  },
+  "homepage": "https://github.com/phibkro/opencode-quota-display/tree/main/packages/ag-quota#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}

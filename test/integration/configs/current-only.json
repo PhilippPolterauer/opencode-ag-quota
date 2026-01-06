@@ -1,0 +1,6 @@
+{
+  "displayMode": "current",
+  "alwaysAppend": true,
+  "format": "{category}: {percent}% ({resetIn})",
+  "separator": " | "
+}
