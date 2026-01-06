@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+.opencode/node_modules/
+.opencode/bun.lock
+.opencode/package-lock.json
+
+# Build output
+dist/
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE configuration
+.vscode/
+.idea/
+
+# Testing
+coverage/
+
+# Don't ignore the plugin source in .opencode (it's part of this repo's structure)
+!.opencode/plugin/
