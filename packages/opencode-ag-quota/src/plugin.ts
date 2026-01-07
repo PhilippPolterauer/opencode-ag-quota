@@ -126,7 +126,7 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
         return currentText + fullMessage;
     };
 
-    const buildQuotaSummary = (quotaResult: UnifiedQuotaResult): string => {
+    const buildQuotaSummary = (quotaResult: UnifiedQuotaResult, separator?: string): string => {
         if (config.displayMode === "current") {
             const currentModel = quotaResult.models.find((model) => model.quotaInfo);
             if (currentModel?.quotaInfo) {
@@ -161,7 +161,7 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
             });
             parts.push(formatted);
         }
-        return parts.join(config.separator);
+        return parts.join(separator ?? config.separator);
     };
 
     /**
@@ -313,11 +313,11 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                 // Just became connected
                 quotaState.isConnected = true;
                 const sourceLabel = quotaState.currentSource === "cloud" ? "Cloud API" : "Language Server";
-                const summary = buildQuotaSummary(result) || "unknown";
+                const summary = buildQuotaSummary(result, "\n") || "unknown";
                 client.tui.showToast({
                     body: {
                         title: "Quota Connected",
-                        message: `Connected via ${sourceLabel}. ${summary}`,
+                        message: `Connected via ${sourceLabel}.\n${summary}`,
                         variant: "success",
                     },
                 });
