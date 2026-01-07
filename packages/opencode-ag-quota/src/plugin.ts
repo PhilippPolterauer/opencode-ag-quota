@@ -145,15 +145,59 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
         }
     };
 
-    // Background connection checker
-    const startConnectionChecker = () => {
-        const check = async () => {
-            const connected = await tryConnect();
+    /**
+     * Check if we need to alert the user about low quota
+     */
+    const checkAlerts = () => {
+        if (!quotaState.data) return;
 
-            if (connected && !quotaState.isConnected) {
+        // Find lowest category fraction
+        let minFraction = 1.0;
+        for (const cat of quotaState.data.categories) {
+            if (cat.remainingFraction < minFraction) {
+                minFraction = cat.remainingFraction;
+            }
+        }
+
+        // Check against thresholds (descending order)
+        const thresholds = [...config.alertThresholds].sort((a, b) => b - a);
+
+        for (const threshold of thresholds) {
+            // If we dropped below this threshold AND haven't alerted for it yet
+            if (minFraction <= threshold && quotaState.lastAlertLevel > threshold) {
+                client.tui.showToast({
+                    body: {
+                        title: "Low Quota Warning",
+                        message: `One or more categories are below ${(threshold * 100).toFixed(0)}% remaining`,
+                        variant: "warning",
+                    },
+                });
+                quotaState.lastAlertLevel = threshold;
+                break; // Only one alert per drop
+            }
+        }
+
+        // If quota went back up (reset), reset alert level
+        if (minFraction > quotaState.lastAlertLevel) {
+            // Find the highest threshold we are now above
+            // Actually, simply setting it to the current fraction or 1.0 is fine?
+            // Safer: set it to 1.0 so we re-alert on next drop
+            // Or better: set it to the next threshold above current fraction
+            quotaState.lastAlertLevel = 1.0;
+        }
+    };
+
+    /**
+     * Start background polling loop
+     */
+    const startPolling = async () => {
+        // Fetch quota
+        const connected = await tryConnect();
+
+        if (connected) {
+            if (!quotaState.isConnected) {
                 // Just became connected
                 quotaState.isConnected = true;
-                quotaState.retryCount = 0;
                 const sourceLabel = quotaState.currentSource === "cloud" ? "Cloud API" : "Language Server";
                 client.tui.showToast({
                     body: {
@@ -162,7 +206,40 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                         variant: "success",
                     },
                 });
-            } else if (!connected && quotaState.isConnected) {
+            }
+
+            // Update data
+            try {
+                // We are connected, so we can try to fetch data.
+                // tryConnect already updates quotaState.currentSource but doesn't return data.
+                // We need to fetch data here or modify tryConnect to return data.
+                // But tryConnect calls fetchQuota which returns data, but tryConnect discards it.
+                // It's better to fetch here again or refactor.
+                // Since fetchQuota is relatively cheap if it's local, but expensive if cloud.
+                // Let's modify logic slightly. tryConnect sets currentSource.
+                
+                // Actually tryConnect calls fetchQuota.
+                // Let's optimize:
+                let cloudAuth;
+                if (config.quotaSource !== "local") {
+                    try {
+                        cloudAuth = await getCloudCredentials();
+                    } catch {
+                        // ignore
+                    }
+                }
+                const result = await fetchQuota(config.quotaSource, shellRunner, cloudAuth);
+                quotaState.data = result;
+                quotaState.currentSource = result.source;
+                
+                checkAlerts();
+            } catch (error) {
+                // If fetch fails here although tryConnect succeeded (unlikely but possible)
+                // Or if we skip tryConnect optimization and just fetch.
+            }
+
+        } else {
+            if (quotaState.isConnected) {
                 // Just became disconnected
                 quotaState.isConnected = false;
                 quotaState.currentSource = null;
@@ -173,37 +250,24 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                         variant: "warning",
                     },
                 });
-            } else if (!connected && !quotaState.isConnected) {
-                // Still not connected, retry
-                quotaState.retryCount++;
-                if (quotaState.retryCount <= MAX_RETRIES) {
-                    setTimeout(check, RETRY_INTERVAL_MS);
-                }
             }
-        };
+        }
 
-        // Initial check
-        check();
+        // Schedule next poll
+        setTimeout(startPolling, config.pollingInterval);
     };
 
-    // Start background connection checker
-    startConnectionChecker();
+    // Start polling immediately
+    startPolling();
 
     return {
         "experimental.text.complete": async (input, output) => {
             const { sessionID, messageID } = input;
             const messageKey = `${sessionID}-${messageID}`;
-            const textLength = output.text.length;
-            const textPreview = output.text.slice(-100).replace(/\n/g, "\\n");
-
-            debugLog(`HOOK FIRED: messageKey=${messageKey}`);
-            debugLog(`  textLength=${textLength}`);
-            debugLog(`  textPreview (last 100 chars): "${textPreview}"`);
-
-            // Check throttle for updates
+            
+            // Check throttle for updates (we still throttle updates to the message content to avoid spamming regex)
             const lastProcessed = processedMessages.get(messageKey);
             if (lastProcessed && Date.now() - lastProcessed < UPDATE_THROTTLE_MS) {
-                debugLog(`  SKIPPING: throttled`);
                 return;
             }
 
@@ -211,7 +275,6 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                 const messageResp = await client.session.message({
                     path: { id: sessionID, messageID: messageID },
                 });
-
 
                 if (
                     !messageResp.data?.info ||
@@ -221,7 +284,6 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                 }
 
                 const modelID = messageResp.data.info.modelID || "";
-                debugLog(`  modelID from session: "${modelID}"`);
 
                 // Only fire for Google/Antigravity models
                 if (
@@ -231,8 +293,8 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                     return;
                 }
 
-                // If not connected, show unavailable
-                if (!quotaState.isConnected) {
+                // If not connected or no data, show unavailable or previous state
+                if (!quotaState.isConnected || !quotaState.data) {
                     if (config.alwaysAppend) {
                         const hint = hasCloudCredentials()
                             ? "quota source unavailable"
@@ -243,39 +305,8 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                     return;
                 }
 
-                let quotaResult: UnifiedQuotaResult;
-                try {
-                    let cloudAuth;
-                    // Try to get updated cloud credentials for the fetch
-                    if (config.quotaSource !== "local") {
-                        try {
-                            cloudAuth = await getCloudCredentials();
-                        } catch {
-                            // Ignore error, will fallback if auto or fail if cloud
-                        }
-                    }
-                    quotaResult = await fetchQuota(config.quotaSource, shellRunner, cloudAuth);
-                } catch (error) {
-                    // Unexpected error when we thought we were connected
-                    quotaState.isConnected = false;
-                    quotaState.currentSource = null;
-                    client.tui.showToast({
-                        body: {
-                            title: "Quota Fetch Failed",
-                            message: "Unexpected error retrieving quota data",
-                            variant: "error",
-                        },
-                    });
-                    // Restart connection checker
-                    quotaState.retryCount = 0;
-                    startConnectionChecker();
-
-                    if (config.alwaysAppend) {
-                        output.text = updateQuotaMessage(output.text, "error");
-                        markMessageProcessed(messageKey);
-                    }
-                    return;
-                }
+                // Use cached data
+                const quotaResult = quotaState.data;
 
                 if (config.displayMode === "current") {
                     // Show only current model's quota
@@ -295,13 +326,16 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                                 : 0
                         ).toFixed(1);
 
+                        // Add red dot if low
+                        const displayPercent = fraction < 0.1 ? `${percent}% 🔴` : `${percent}%`;
+
                         const resetDate = currentModel.quotaInfo.resetTime
                             ? new Date(currentModel.quotaInfo.resetTime)
                             : null;
 
                         const formatted = formatQuotaEntry(config.format, {
                             category: "Current",
-                            percent,
+                            percent: displayPercent,
                             resetIn: resetDate ? formatRelativeTime(resetDate) : null,
                             resetAt: resetDate ? formatAbsoluteTime(resetDate) : null,
                             model: modelID,
@@ -319,10 +353,13 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
 
                     for (const cat of quotaResult.categories) {
                         const percent = (cat.remainingFraction * 100).toFixed(0);
+                        
+                        // Add red dot if low
+                        const displayPercent = cat.remainingFraction < 0.1 ? `${percent}% 🔴` : `${percent}%`;
 
                         const formatted = formatQuotaEntry(config.format, {
                             category: cat.category,
-                            percent,
+                            percent: displayPercent,
                             resetIn: cat.resetTime ? formatRelativeTime(cat.resetTime) : null,
                             resetAt: cat.resetTime ? formatAbsoluteTime(cat.resetTime) : null,
                             model: modelID,
@@ -331,21 +368,18 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                     }
 
                     if (parts.length > 0) {
-                        debugLog(`  APPENDING quota for messageKey=${messageKey}`);
                         output.text = updateQuotaMessage(
                             output.text,
                             parts.join(config.separator),
                         );
                         markMessageProcessed(messageKey);
                     } else if (config.alwaysAppend) {
-                        debugLog(`  APPENDING unknown for messageKey=${messageKey}`);
                         output.text = updateQuotaMessage(output.text, "unknown");
                         markMessageProcessed(messageKey);
                     }
                 }
             } catch {
                 // Silently fail to avoid disrupting TUI
-                debugLog(`  CATCH: error occurred for messageKey=${messageKey}`);
                 if (config.alwaysAppend) {
                     output.text = updateQuotaMessage(output.text, "error");
                     markMessageProcessed(messageKey);

@@ -11,8 +11,12 @@ describe("parseQuotaOutput", () => {
     it("detects quota line presence", () => {
         const output = `Hello!
 
----
-*Quota: Flash: 88% (4h 16m) | Pro: 45% (1h 37m)*`;
+
+--- AG Quota ---
+ AG Quota 
+--- AG Quota ---
+
+*Flash: 88% (4h 16m) | Pro: 45% (1h 37m)*`;
 
         const result = parseQuotaOutput(output);
         expect(result.hasQuotaLine).toBe(true);
@@ -29,8 +33,12 @@ describe("parseQuotaOutput", () => {
     it("parses unavailable status", () => {
         const output = `Hello!
 
----
-*Quota: unavailable*`;
+
+--- AG Quota ---
+ AG Quota 
+--- AG Quota ---
+
+*antigravity language server not found*`;
 
         const result = parseQuotaOutput(output);
         expect(result.hasQuotaLine).toBe(true);
@@ -41,8 +49,12 @@ describe("parseQuotaOutput", () => {
     it("parses unknown status", () => {
         const output = `Hello!
 
----
-*Quota: unknown*`;
+
+--- AG Quota ---
+ AG Quota 
+--- AG Quota ---
+
+*unknown*`;
 
         const result = parseQuotaOutput(output);
         expect(result.status).toBe("unknown");
@@ -51,8 +63,12 @@ describe("parseQuotaOutput", () => {
     it("parses error status", () => {
         const output = `Hello!
 
----
-*Quota: error*`;
+
+--- AG Quota ---
+ AG Quota 
+--- AG Quota ---
+
+*error*`;
 
         const result = parseQuotaOutput(output);
         expect(result.status).toBe("error");
@@ -61,8 +77,12 @@ describe("parseQuotaOutput", () => {
     it("extracts categories with reset times", () => {
         const output = `Hello!
 
----
-*Quota: Claude/GPT: 93% (4h 41m) | Flash: 88% (4h 16m) | Pro: 45% (1h 37m)*`;
+
+--- AG Quota ---
+ AG Quota 
+--- AG Quota ---
+
+*Claude/GPT: 93% (4h 41m) | Flash: 88% (4h 16m) | Pro: 45% (1h 37m)*`;
 
         const result = parseQuotaOutput(output);
         expect(result.categories).toHaveLength(3);
@@ -87,8 +107,12 @@ describe("parseQuotaOutput", () => {
     it("extracts categories without reset times", () => {
         const output = `Hello!
 
----
-*Quota: Flash: 88% | Pro: 45%*`;
+
+--- AG Quota ---
+ AG Quota 
+--- AG Quota ---
+
+*Flash: 88% | Pro: 45%*`;
 
         const result = parseQuotaOutput(output);
         expect(result.categories).toHaveLength(2);
@@ -99,8 +123,12 @@ describe("parseQuotaOutput", () => {
     it("handles custom bracket format", () => {
         const output = `Hello!
 
----
-*Quota: [Flash] 88% (4h 16m) · [Pro] 45% (1h 37m)*`;
+
+--- AG Quota ---
+ AG Quota 
+--- AG Quota ---
+
+*[Flash] 88% (4h 16m) · [Pro] 45% (1h 37m)*`;
 
         const result = parseQuotaOutput(output);
         expect(result.categories).toHaveLength(2);
@@ -111,12 +139,33 @@ describe("parseQuotaOutput", () => {
     it("handles decimal percentages", () => {
         const output = `Hello!
 
----
-*Quota: Current: 85.5%*`;
+
+--- AG Quota ---
+ AG Quota 
+--- AG Quota ---
+
+*Current: 85.5%*`;
 
         const result = parseQuotaOutput(output);
         expect(result.categories).toHaveLength(1);
         expect(result.categories[0].percent).toBe(85.5);
+    });
+
+    it("handles low quota warning (red dot)", () => {
+        const output = `Hello!
+
+
+--- AG Quota ---
+ AG Quota 
+--- AG Quota ---
+
+*Flash: 5% 🔴 (4h 16m)*`;
+
+        const result = parseQuotaOutput(output);
+        expect(result.categories).toHaveLength(1);
+        expect(result.categories[0].name).toBe("Flash");
+        expect(result.categories[0].percent).toBe(5);
+        expect(result.categories[0].resetTime).toBe("4h 16m");
     });
 });
 

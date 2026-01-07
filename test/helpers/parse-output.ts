@@ -24,8 +24,8 @@ export function parseQuotaOutput(output: string): ParsedQuotaOutput {
         status: null,
     };
 
-    // Match the quota line pattern: ---\n*Quota: ...*
-    const quotaMatch = output.match(/---\s*\n\*Quota:\s*([^*]+)\*/);
+    // Match the quota line pattern: --- AG Quota ---\n*...*
+    const quotaMatch = output.match(/--- AG Quota ---\s*\n\*([^*]+)\*/);
     if (!quotaMatch) {
         return result;
     }
@@ -34,7 +34,7 @@ export function parseQuotaOutput(output: string): ParsedQuotaOutput {
     result.quotaText = quotaMatch[1].trim();
 
     // Check for special statuses
-    if (result.quotaText === "unavailable") {
+    if (result.quotaText === "unavailable" || result.quotaText === "antigravity language server not found") {
         result.status = "unavailable";
         return result;
     }
@@ -49,8 +49,8 @@ export function parseQuotaOutput(output: string): ParsedQuotaOutput {
 
     result.status = "available";
 
-    // Parse categories: "Flash: 88% (4h 16m) | Pro: 45% (1h 37m)"
-    const categoryPattern = /(\w+(?:\/\w+)?)\s*:\s*(\d+(?:\.\d+)?)\s*%(?:\s*\(([^)]+)\))?/g;
+    // Parse categories: "Flash: 88% (4h 16m) | Pro: 45% (1h 37m)" or "Flash: 5% 🔴 (4h 16m)"
+    const categoryPattern = /(\w+(?:\/\w+)?)\s*:\s*(\d+(?:\.\d+)?)\s*%(?:\s*🔴)?(?:\s*\(([^)]+)\))?/g;
     let match;
     while ((match = categoryPattern.exec(result.quotaText)) !== null) {
         result.categories.push({
@@ -61,7 +61,7 @@ export function parseQuotaOutput(output: string): ParsedQuotaOutput {
     }
 
     // Also check for custom format like "[Flash] 88%"
-    const customPattern = /\[(\w+(?:\/\w+)?)\]\s*(\d+(?:\.\d+)?)\s*%(?:\s*\(([^)]+)\))?/g;
+    const customPattern = /\[(\w+(?:\/\w+)?)\]\s*(\d+(?:\.\d+)?)\s*%(?:\s*🔴)?(?:\s*\(([^)]+)\))?/g;
     while ((match = customPattern.exec(result.quotaText)) !== null) {
         result.categories.push({
             name: match[1],
