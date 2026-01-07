@@ -3,7 +3,7 @@
  * Copyright (c) 2026 Philipp
  */
 
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -99,7 +99,7 @@ const DEFAULT_CONFIG: Required<QuotaConfig> = {
  * @param projectDir - The project directory to search from
  * @returns Merged configuration with defaults
  */
-export function loadConfig(projectDir?: string): Required<QuotaConfig> {
+export async function loadConfig(projectDir?: string): Promise<Required<QuotaConfig>> {
     const paths: string[] = [];
 
     // Project-local config
@@ -114,7 +114,7 @@ export function loadConfig(projectDir?: string): Required<QuotaConfig> {
 
     for (const configPath of paths) {
         try {
-            const content = readFileSync(configPath, "utf-8");
+            const content = await readFile(configPath, "utf-8");
             const userConfig = JSON.parse(content) as QuotaConfig;
             return { ...DEFAULT_CONFIG, ...userConfig };
         } catch {

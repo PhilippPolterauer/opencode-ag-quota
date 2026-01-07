@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -57,11 +57,11 @@ function getAccountsFilePath(): string {
  * Load accounts from the opencode-antigravity-auth plugin.
  * @throws Error if no accounts file exists or no accounts are configured
  */
-function loadAccounts(): AccountsFile {
+async function loadAccounts(): Promise<AccountsFile> {
     const accountsPath = getAccountsFilePath();
 
     try {
-        const content = readFileSync(accountsPath, "utf-8");
+        const content = await readFile(accountsPath, "utf-8");
         const data = JSON.parse(content) as AccountsFile;
 
         if (!data.accounts || data.accounts.length === 0) {
@@ -83,9 +83,9 @@ function loadAccounts(): AccountsFile {
 /**
  * Check if cloud credentials are available.
  */
-export function hasCloudCredentials(): boolean {
+export async function hasCloudCredentials(): Promise<boolean> {
     try {
-        loadAccounts();
+        await loadAccounts();
         return true;
     } catch {
         return false;
@@ -132,7 +132,7 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
  */
 export async function getCloudCredentials(): Promise<CloudAuthCredentials> {
     // Load accounts
-    const accountsFile = loadAccounts();
+    const accountsFile = await loadAccounts();
     const activeAccount =
         accountsFile.accounts[accountsFile.activeIndex] ?? accountsFile.accounts[0];
 

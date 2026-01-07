@@ -18,18 +18,18 @@ describe("loadConfig", () => {
         }
     });
 
-    it("returns defaults when no config file exists", () => {
-        const config = loadConfig("/nonexistent/path");
+    it("returns defaults when no config file exists", async () => {
+        const config = await loadConfig("/nonexistent/path");
         expect(config).toEqual(DEFAULT_CONFIG);
     });
 
-    it("includes default alert thresholds and polling interval", () => {
-        const config = loadConfig("/nonexistent/path");
+    it("includes default alert thresholds and polling interval", async () => {
+        const config = await loadConfig("/nonexistent/path");
         expect(config.alertThresholds).toEqual([0.2, 0.1, 0.05]);
         expect(config.pollingInterval).toBe(30000);
     });
 
-    it("loads and merges project config", () => {
+    it("loads and merges project config", async () => {
         const userConfig = {
             displayMode: "current" as const,
             format: "{category}: {percent}%",
@@ -39,7 +39,7 @@ describe("loadConfig", () => {
             JSON.stringify(userConfig)
         );
 
-        const config = loadConfig(testDir);
+        const config = await loadConfig(testDir);
         expect(config.displayMode).toBe("current");
         expect(config.format).toBe("{category}: {percent}%");
         // Defaults preserved
@@ -47,13 +47,13 @@ describe("loadConfig", () => {
         expect(config.alwaysAppend).toBe(DEFAULT_CONFIG.alwaysAppend);
     });
 
-    it("handles invalid JSON gracefully", () => {
+    it("handles invalid JSON gracefully", async () => {
         writeFileSync(join(configDir, "ag-quota.json"), "not valid json");
-        const config = loadConfig(testDir);
+        const config = await loadConfig(testDir);
         expect(config).toEqual(DEFAULT_CONFIG);
     });
 
-    it("merges all config options", () => {
+    it("merges all config options", async () => {
         const userConfig = {
             quotaSource: "cloud" as const,
             format: "[{category}] {percent}%",
@@ -67,7 +67,7 @@ describe("loadConfig", () => {
             JSON.stringify(userConfig)
         );
 
-        const config = loadConfig(testDir);
+        const config = await loadConfig(testDir);
         expect(config).toEqual({
             ...userConfig,
             pollingInterval: 30000,
@@ -75,7 +75,7 @@ describe("loadConfig", () => {
         });
     });
 
-    it("accepts quotaSource config option", () => {
+    it("accepts quotaSource config option", async () => {
         const userConfig = {
             quotaSource: "local" as const,
         };
@@ -84,7 +84,7 @@ describe("loadConfig", () => {
             JSON.stringify(userConfig)
         );
 
-        const config = loadConfig(testDir);
+        const config = await loadConfig(testDir);
         expect(config.quotaSource).toBe("local");
         // Other defaults preserved
         expect(config.format).toBe(DEFAULT_CONFIG.format);

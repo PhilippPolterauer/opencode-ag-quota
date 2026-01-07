@@ -13,7 +13,7 @@ import { fetchQuota } from "ag-quota";
 
 // Mock ag-quota
 vi.mock("ag-quota", () => ({
-    loadConfig: vi.fn(() => ({
+    loadConfig: vi.fn(async () => ({
         quotaMarker: "> AG Quota:",
         pollingInterval: 100000, // Long interval to avoid loops in test
         quotaSource: "local",
@@ -34,7 +34,7 @@ vi.mock("ag-quota", () => ({
 // Mock auth
 vi.mock("../../../packages/opencode-ag-quota/src/auth", () => ({
     getCloudCredentials: vi.fn(),
-    hasCloudCredentials: vi.fn(() => true),
+    hasCloudCredentials: vi.fn(async () => true),
 }));
 
 describe("parseQuotaOutput", () => {
@@ -270,8 +270,8 @@ describe("QuotaPlugin Logic", () => {
         // So we need to wait for the promise to resolve.
         await new Promise(resolve => setTimeout(resolve, 0));
         
-        // fetchQuota is called twice: once in tryConnect and once in startPolling
-        expect(fetchQuota).toHaveBeenCalledTimes(2); 
+        // fetchQuota is called once in startPolling (which calls tryConnect)
+        expect(fetchQuota).toHaveBeenCalledTimes(1); 
 
         // Now call the hook
         const hook = plugin["experimental.text.complete"];
@@ -287,7 +287,7 @@ describe("QuotaPlugin Logic", () => {
         }
 
         // Should use cached data, so fetchQuota should NOT be called again
-        expect(fetchQuota).toHaveBeenCalledTimes(2);
+        expect(fetchQuota).toHaveBeenCalledTimes(1);
         
         // Check output modification
         // We mocked formatQuotaEntry to return "Category: Percent"

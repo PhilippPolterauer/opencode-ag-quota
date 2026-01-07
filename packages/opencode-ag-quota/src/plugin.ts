@@ -24,7 +24,7 @@
  */
 
 import { type Plugin } from "@opencode-ai/plugin";
-import * as fs from "node:fs";
+import { appendFile } from "node:fs/promises";
 import * as path from "node:path";
 import {
     fetchQuota,
@@ -46,11 +46,11 @@ const DEFAULT_MARKER = "--- AG Quota ---";
 /**
  * Debug logger - writes to a file to understand hook behavior
  */
-function debugLog(message: string): void {
+async function debugLog(message: string): Promise<void> {
     try {
         const timestamp = new Date().toISOString();
         const logLine = `[${timestamp}] ${message}\n`;
-        fs.appendFileSync(LOG_FILE, logLine);
+        await appendFile(LOG_FILE, logLine);
     } catch {
         // Ignore logging errors
     }
@@ -58,7 +58,7 @@ function debugLog(message: string): void {
 
 export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
     // Load configuration
-    const config = loadConfig(directory);
+    const config = await loadConfig(directory);
     const marker = config.quotaMarker || DEFAULT_MARKER;
 
     // Use Bun's $ shell helper from opencode
@@ -78,6 +78,7 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
         isConnected: boolean;
         currentSource: "cloud" | "local" | null;
         retryCount: number;
+        pendingConnectToast: boolean;
     }
 
     let quotaState: PluginState = {
@@ -85,7 +86,8 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
         lastAlertLevel: 1.0,
         isConnected: false,
         currentSource: null,
-        retryCount: 0
+        retryCount: 0,
+        pendingConnectToast: false,
     };
 
     // Track processed messages to prevent duplicate quota appending
@@ -124,8 +126,118 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
         return currentText + fullMessage;
     };
 
+    const buildQuotaSummary = (quotaResult: UnifiedQuotaResult): string => {
+        if (config.displayMode === "current") {
+            const currentModel = quotaResult.models.find((model) => model.quotaInfo);
+            if (currentModel?.quotaInfo) {
+                const fraction = currentModel.quotaInfo.remainingFraction;
+                const percent = (
+                    typeof fraction === "number" && Number.isFinite(fraction)
+                        ? fraction * 100
+                        : 0
+                ).toFixed(1);
+                const resetDate = currentModel.quotaInfo.resetTime
+                    ? new Date(currentModel.quotaInfo.resetTime)
+                    : null;
+                return formatQuotaEntry(config.format, {
+                    category: "Current",
+                    percent: `${percent}%`,
+                    resetIn: resetDate ? formatRelativeTime(resetDate) : null,
+                    resetAt: resetDate ? formatAbsoluteTime(resetDate) : null,
+                    model: currentModel.modelName,
+                });
+            }
+        }
+
+        const parts: string[] = [];
+        for (const cat of quotaResult.categories) {
+            const percent = (cat.remainingFraction * 100).toFixed(0);
+            const formatted = formatQuotaEntry(config.format, {
+                category: cat.category,
+                percent: `${percent}%`,
+                resetIn: cat.resetTime ? formatRelativeTime(cat.resetTime) : null,
+                resetAt: cat.resetTime ? formatAbsoluteTime(cat.resetTime) : null,
+                model: "current",
+            });
+            parts.push(formatted);
+        }
+        return parts.join(config.separator);
+    };
+
+    /**
+     * Format a short quota summary for toasts.
+     */
+    const formatQuotaSummary = (quota: UnifiedQuotaResult): string => {
+        if (config.displayMode === "current") {
+            const currentModel = quota.models.find((model) => model.quotaInfo);
+            if (currentModel?.quotaInfo) {
+                const fraction = currentModel.quotaInfo.remainingFraction;
+                const percent = (
+                    typeof fraction === "number" && Number.isFinite(fraction)
+                        ? fraction * 100
+                        : 0
+                ).toFixed(1);
+                const resetDate = currentModel.quotaInfo.resetTime
+                    ? new Date(currentModel.quotaInfo.resetTime)
+                    : null;
+                return formatQuotaEntry(config.format, {
+                    category: "Current",
+                    percent: `${percent}%`,
+                    resetIn: resetDate ? formatRelativeTime(resetDate) : null,
+                    resetAt: resetDate ? formatAbsoluteTime(resetDate) : null,
+                    model: currentModel.modelName,
+                });
+            }
+        }
+
+        const parts: string[] = [];
+
+        for (const cat of quota.categories) {
+            const percent = (cat.remainingFraction * 100).toFixed(0);
+            const displayPercent =
+                cat.remainingFraction < 0.1 ? `${percent}% 🔴` : `${percent}%`;
+
+            const formatted = formatQuotaEntry(config.format, {
+                category: cat.category,
+                percent: displayPercent,
+                resetIn: cat.resetTime ? formatRelativeTime(cat.resetTime) : null,
+                resetAt: cat.resetTime ? formatAbsoluteTime(cat.resetTime) : null,
+                model: "",
+            });
+            parts.push(formatted);
+        }
+
+        if (parts.length > 0) {
+            return parts.join(config.separator);
+        }
+
+        const fallbackModel = quota.models.find((model) => model.quotaInfo);
+        if (fallbackModel?.quotaInfo) {
+            const fraction = fallbackModel.quotaInfo.remainingFraction;
+            const percent = (
+                typeof fraction === "number" && Number.isFinite(fraction)
+                    ? fraction * 100
+                    : 0
+            ).toFixed(1);
+            return formatQuotaEntry(config.format, {
+                category: "Current",
+                percent: `${percent}%`,
+                resetIn: fallbackModel.quotaInfo.resetTime
+                    ? formatRelativeTime(new Date(fallbackModel.quotaInfo.resetTime))
+                    : null,
+                resetAt: fallbackModel.quotaInfo.resetTime
+                    ? formatAbsoluteTime(new Date(fallbackModel.quotaInfo.resetTime))
+                    : null,
+                model: fallbackModel.modelName,
+            });
+        }
+
+        return "unknown";
+    };
+
+
     // Try to connect with the configured source
-    const tryConnect = async (): Promise<boolean> => {
+    const tryConnect = async (): Promise<UnifiedQuotaResult | null> => {
         try {
             let cloudAuth;
             if (config.quotaSource !== "local") {
@@ -139,11 +251,13 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
 
             const result = await fetchQuota(config.quotaSource, shellRunner, cloudAuth);
             quotaState.currentSource = result.source;
-            return true;
+            return result;
         } catch {
-            return false;
+            return null;
         }
     };
+
+
 
     /**
      * Check if we need to alert the user about low quota
@@ -192,52 +306,26 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
      */
     const startPolling = async () => {
         // Fetch quota
-        const connected = await tryConnect();
+        const result = await tryConnect();
 
-        if (connected) {
+        if (result) {
             if (!quotaState.isConnected) {
                 // Just became connected
                 quotaState.isConnected = true;
                 const sourceLabel = quotaState.currentSource === "cloud" ? "Cloud API" : "Language Server";
+                const summary = buildQuotaSummary(result) || "unknown";
                 client.tui.showToast({
                     body: {
                         title: "Quota Connected",
-                        message: `Connected via ${sourceLabel}`,
+                        message: `Connected via ${sourceLabel}. ${summary}`,
                         variant: "success",
                     },
                 });
             }
 
-            // Update data
-            try {
-                // We are connected, so we can try to fetch data.
-                // tryConnect already updates quotaState.currentSource but doesn't return data.
-                // We need to fetch data here or modify tryConnect to return data.
-                // But tryConnect calls fetchQuota which returns data, but tryConnect discards it.
-                // It's better to fetch here again or refactor.
-                // Since fetchQuota is relatively cheap if it's local, but expensive if cloud.
-                // Let's modify logic slightly. tryConnect sets currentSource.
-                
-                // Actually tryConnect calls fetchQuota.
-                // Let's optimize:
-                let cloudAuth;
-                if (config.quotaSource !== "local") {
-                    try {
-                        cloudAuth = await getCloudCredentials();
-                    } catch {
-                        // ignore
-                    }
-                }
-                const result = await fetchQuota(config.quotaSource, shellRunner, cloudAuth);
-                quotaState.data = result;
-                quotaState.currentSource = result.source;
-                
-                checkAlerts();
-            } catch (error) {
-                // If fetch fails here although tryConnect succeeded (unlikely but possible)
-                // Or if we skip tryConnect optimization and just fetch.
-            }
-
+            quotaState.data = result;
+            quotaState.currentSource = result.source;
+            checkAlerts();
         } else {
             if (quotaState.isConnected) {
                 // Just became disconnected
@@ -296,7 +384,7 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                 // If not connected or no data, show unavailable or previous state
                 if (!quotaState.isConnected || !quotaState.data) {
                     if (config.alwaysAppend) {
-                        const hint = hasCloudCredentials()
+                        const hint = (await hasCloudCredentials())
                             ? "quota source unavailable"
                             : "run 'opencode auth login' first";
                         output.text = updateQuotaMessage(output.text, hint);
