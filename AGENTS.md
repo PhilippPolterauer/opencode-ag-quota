@@ -1,30 +1,37 @@
 # Opencode Quota Display - Agent Guidelines
 
-This document defines the development standards, commands, and rules for AI agents and developers working on the `opencode-quota-display` plugin. Adhere strictly to these guidelines to ensure consistency and stability.
+Development standards for the `opencode-quota-display` plugin. Follow them exactly.
 
 ## 1. Project Overview
-**Goal:** Display model quota information in the center of the bottom status bar of the Opencode TUI.
-**Architecture:** TypeScript-based plugin.
-**State:** Initial setup.
+**Goal:** Show model quota in Opencode’s status bar center.
+**Architecture:** TypeScript plugin.
+**State:** Scaffold.
 
 ## 2. Environment & Commands
 
 ### Prerequisites
-- Node.js (Latest LTS)
+- Node.js (latest LTS)
 - npm or pnpm
 
 ### Core Commands
 | Action | Command | Description |
 |--------|---------|-------------|
-| **Build** | `npm run build` | Compiles TypeScript to JavaScript (dist/). |
-| **Dev** | `npm run dev` | Runs in watch mode for development. |
-| **Lint** | `npm run lint` | Runs ESLint and Prettier checks. |
-| **Fix** | `npm run lint:fix` | Auto-fixes linting and formatting errors. |
-| **Test** | `npm test` | Runs all tests using Vitest. |
-| **Test File** | `npx vitest <path/to/file>` | Run tests for a specific file. |
-| **Type Check** | `npm run typecheck` | Runs `tsc --noEmit` to verify types. |
+| **Build** | `npm run build` | Build `dist/` from TypeScript. |
+| **Dev** | `npm run dev` | Watch mode. |
+| **Lint** | `npm run lint` | ESLint + Prettier checks. |
+| **Fix** | `npm run lint:fix` | Auto-fix lint/format. |
+| **Test** | `npm test` | Run Vitest. |
+| **Test File** | `npx vitest <path/to/file>` | Run one test file. |
+| **Type Check** | `npm run typecheck` | `tsc --noEmit`. |
 
-*Note: Ensure `npm install` is run before executing these commands.*
+*Note: Run `npm install` first.*
+
+## 2.1. OpenCode Tool Discipline
+- **Read before edit/write:** Always run the `read` tool before editing or writing a file. Treat the response as canonical—review every line so you know exactly what you will change.
+- **Pay attention to formatting:** Tool output includes line numbers and trimmed text; copy/paste only the actual content and preserve whitespace exactly.
+- **Re-read when uncertain:** If a change affects multiple sections or an edit fails, re-read the file to ensure you have the latest contents.
+- **Prefer `edit` over `write`:** Modify existing files with `edit` whenever possible; only use `write` when creating a new file or fully replacing contents.
+- **Verify after changes:** Re-read modified files after `edit`/`write` and confirm the intended changes applied.
 
 ## 3. Code Style & Conventions
 
@@ -73,5 +80,19 @@ This document defines the development standards, commands, and rules for AI agen
 - **JSDoc:** Add JSDoc comments for all exported interfaces and complex functions.
 - **Inline Comments:** Explain *why* complex logic exists, not *what* the code is doing.
 
+## 8. OpenCode Read/Write Tool Usage
+- **Read Before Edit/Write:** Always call the Read tool on a file before any Edit or Write.
+- **Carefully Inspect Reads:** Verify the Read output and use exact text (including whitespace) in edits.
+- **Document the Details:** In case of multi-line reads, note the line numbers mentally so you can reference them in edits—it prevents mismatches.
+- **No Assumptions:** Do not assume file contents; re-read if any doubt exists.
+- **Confirm Success:** Re-read the file after edits to confirm changes applied as intended.
+- **Respect the Tools:** OpenCode's Read and Write tools represent the single source of truth during editing; always base modification decisions on their outputs and avoid guessing their behavior, especially when tool errors indicate the file changed since the last read.
+
 ---
 *Verified by Opencode on 2026-01-06*
+
+
+
+
+
+

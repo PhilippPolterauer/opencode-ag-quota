@@ -72,8 +72,8 @@ describe("ag-quota CLI", () => {
             const parsed = JSON.parse(stdout);
             const categoryNames = parsed.categories.map((c: any) => c.name);
 
-            // Should have some of these categories
-            const expectedCategories = ["Gemini Flash", "Gemini Pro", "Claude/GPT/OSS"];
+            // Should have some of these categories (new unified names)
+            const expectedCategories = ["Flash", "Pro", "Claude/GPT"];
             const hasAtLeastOne = expectedCategories.some((cat) =>
                 categoryNames.includes(cat)
             );

@@ -11,8 +11,14 @@ npm install -g ag-quota
 ## CLI Usage
 
 ```bash
-# Display quotas in terminal
+# Display quotas (auto-detects source)
 ag-quota
+
+# Force cloud source
+ag-quota --source=cloud
+
+# Force local source
+ag-quota --source=local
 
 # Output as JSON
 ag-quota --json
@@ -21,11 +27,11 @@ ag-quota --json
 ### Example Output
 
 ```
-Antigravity Quotas (Retrieved at: 10:34:53 PM):
+Antigravity Quotas (Source: Cloud API, 10:34:53 PM):
 ------------------------------------------------------------
-Claude/GPT/OSS      :  14.7% remaining (Resets in: 3h 58m)
-Gemini Flash        :  81.8% remaining (Resets in: 3h 34m)
-Gemini Pro          :  45.3% remaining (Resets in: 55m)
+Claude/GPT          :  83.3% remaining (Resets in: 3h 58m)
+Flash               : 100.0% remaining (Resets in: 3h 34m)
+Pro                 :  95.0% remaining (Resets in: 55m)
 ```
 
 ### JSON Output
@@ -36,28 +42,29 @@ ag-quota --json
 
 ```json
 {
+  "source": "cloud",
   "timestamp": 1767735298099,
   "categories": [
     {
-      "name": "Claude/GPT/OSS",
-      "remainingFraction": 0.14666666,
-      "remainingPercentage": 14.7,
-      "resetTime": "2026-01-07T01:33:34Z",
+      "name": "Claude/GPT",
+      "remainingFraction": 0.833,
+      "remainingPercentage": 83.3,
+      "resetTime": "2026-01-07T13:20:23.000Z",
       "resetsIn": "3h 58m"
     },
     {
-      "name": "Gemini Pro",
-      "remainingFraction": 0.453125,
-      "remainingPercentage": 45.3,
-      "resetTime": "2026-01-06T22:30:14Z",
-      "resetsIn": "55m"
+      "name": "Flash",
+      "remainingFraction": 1.0,
+      "remainingPercentage": 100.0,
+      "resetTime": "2026-01-07T13:32:12.000Z",
+      "resetsIn": "4h 10m"
     },
     {
-      "name": "Gemini Flash",
-      "remainingFraction": 0.8175,
-      "remainingPercentage": 81.8,
-      "resetTime": "2026-01-07T01:09:14Z",
-      "resetsIn": "3h 34m"
+      "name": "Pro",
+      "remainingFraction": 0.95,
+      "remainingPercentage": 95.0,
+      "resetTime": "2026-01-07T13:13:23.000Z",
+      "resetsIn": "3h 51m"
     }
   ]
 }
@@ -65,8 +72,45 @@ ag-quota --json
 
 ## Library Usage
 
+### Unified Quota Fetching (Recommended)
+
 ```typescript
-import { fetchAntigravityStatus, formatRelativeTime, formatAbsoluteTime } from 'ag-quota';
+import { fetchQuota, type QuotaSource } from 'ag-quota';
+
+// For local source, provide a shell runner
+const shellRunner = async (cmd: string) => {
+  const { execSync } = await import('node:child_process');
+  return execSync(cmd).toString();
+};
+
+// Fetch quota (auto mode tries cloud first, falls back to local)
+const result = await fetchQuota('auto', shellRunner);
+
+console.log(`Source: ${result.source}`);
+for (const cat of result.categories) {
+  console.log(`${cat.category}: ${(cat.remainingFraction * 100).toFixed(1)}%`);
+}
+```
+
+### Cloud-Only Fetching
+
+```typescript
+import { fetchCloudQuota, hasCloudCredentials } from 'ag-quota';
+
+if (hasCloudCredentials()) {
+  const result = await fetchCloudQuota();
+  console.log(`Account: ${result.account.email}`);
+  for (const model of result.models) {
+    const quota = model.quotaInfo?.remainingFraction ?? 0;
+    console.log(`${model.label}: ${(quota * 100).toFixed(1)}%`);
+  }
+}
+```
+
+### Local Server Fetching
+
+```typescript
+import { fetchAntigravityStatus, formatRelativeTime } from 'ag-quota';
 
 const shellRunner = async (cmd: string) => {
   const { execSync } = await import('node:child_process');
@@ -79,9 +123,7 @@ const configs = userStatus.cascadeModelConfigData?.clientModelConfigs || [];
 for (const model of configs) {
   const quota = model.quotaInfo?.remainingFraction ?? 0;
   const resetTime = model.quotaInfo?.resetTime;
-  const relativeTime = resetTime ? formatRelativeTime(new Date(resetTime)) : null;
-  const absoluteTime = resetTime ? formatAbsoluteTime(new Date(resetTime)) : null;
-  console.log(`${model.label}: ${(quota * 100).toFixed(1)}% (resets in ${relativeTime} at ${absoluteTime})`);
+  console.log(`${model.label}: ${(quota * 100).toFixed(1)}%`);
 }
 ```
 
@@ -91,6 +133,7 @@ Create a config file at `.opencode/ag-quota.json` or `~/.config/opencode/ag-quot
 
 ```json
 {
+  "quotaSource": "auto",
   "format": "{category}: {percent}% ({resetIn})",
   "separator": " | ",
   "displayMode": "all",
@@ -102,10 +145,17 @@ Create a config file at `.opencode/ag-quota.json` or `~/.config/opencode/ag-quot
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `quotaSource` | `"cloud"` \| `"local"` \| `"auto"` | `"auto"` | Where to fetch quota data from |
 | `format` | string | `"{category}: {percent}% ({resetIn})"` | Format string with placeholders |
 | `separator` | string | `" \| "` | Separator between categories |
 | `displayMode` | `"all"` \| `"current"` | `"all"` | Show all quotas or only current model |
 | `alwaysAppend` | boolean | `true` | Always show quota info even when unavailable |
+
+### Quota Sources
+
+- `cloud` - Fetch from Google Cloud Code API (requires `opencode auth login`)
+- `local` - Fetch from local Windsurf/Antigravity language server process
+- `auto` - Try cloud first, fallback to local (default, recommended)
 
 ### Format Placeholders
 
@@ -118,7 +168,14 @@ Create a config file at `.opencode/ag-quota.json` or `~/.config/opencode/ag-quot
 ## Requirements
 
 - Node.js >= 18
-- Windsurf/Codeium Language Server running (for quota data)
+- For cloud mode: `opencode auth login` (via [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth))
+- For local mode: Windsurf/Codeium Language Server running
+
+## Acknowledgments
+
+Cloud quota fetching based on:
+- [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) by [@NoeFabris](https://github.com/NoeFabris)
+- [vscode-antigravity-cockpit](https://github.com/jlcodes99/vscode-antigravity-cockpit) by [@jlcodes99](https://github.com/jlcodes99)
 
 ## License
 

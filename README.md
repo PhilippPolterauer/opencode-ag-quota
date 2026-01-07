@@ -4,24 +4,38 @@ An Opencode TUI plugin and CLI tool to display remaining Antigravity model quota
 
 ![Quota Display Example](docs/example.png)
 
-> **⚠️ Requirement**: Antigravity should be running in the background for this tool to retrieve quota data.
-
 ## Features
 
+- **Cloud API Support**: Fetches quota directly from Google Cloud Code API (recommended).
+- **Local Server Support**: Falls back to local language server if cloud unavailable.
 - **TUI Integration**: Displays remaining quota information inside the Opencode TUI.
-- **CLI Tool**: Quick terminal check for all model categories (Flash, Pro, Claude/GPT/OSS).
+- **CLI Tool**: Quick terminal check for all model categories (Flash, Pro, Claude/GPT).
 - **JSON Output**: Machine-readable quota data for scripting.
 
-## Important Prerequisites
+## Prerequisites
 
-This plugin retrieves data directly from the **local Antigravity Language Server**. It does **not** handle authentication or start the server.
+### Cloud Mode (Recommended)
 
-For this to work, you must satisfy one of the following:
+Uses the [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) plugin for authentication:
 
-1. Run an IDE with Antigravity/Windsurf open, authenticated, so it starts the language server.
-2. Run the `language_server` process manually (authenticated) on the same machine/container as Opencode.
+```bash
+# 1. Add the auth plugin to your opencode.json
+# 2. Run:
+opencode auth login
+```
 
-If Opencode is running in WSL, the Antigravity server must also be running inside WSL.
+This is the **recommended** approach as it:
+- Works without running Windsurf/Antigravity IDE
+- More reliable than local server discovery
+- Supports multi-account rotation
+
+### Local Mode (Fallback)
+
+If cloud credentials are unavailable, the plugin falls back to local server mode which requires:
+
+1. Run an IDE with Antigravity open and authenticated.
+
+> If Opencode is running in WSL, the Antigravity server must also be running inside WSL.
 
 ## Installation (Opencode)
 
@@ -33,12 +47,24 @@ Add the plugin to your Opencode config (`opencode.json`):
 }
 ```
 
-## Configuration (Quota Display)
+For cloud quota support, also add the auth plugin:
+
+```json
+{
+  "plugin": [
+    "opencode-antigravity-auth@1.2.7",
+    "opencode-ag-quota"
+  ]
+}
+```
+
+## Configuration
 
 Create `.opencode/ag-quota.json` (project-local) or `~/.config/opencode/ag-quota.json` (global).
 
 ```json
 {
+  "quotaSource": "auto",
   "format": "{category}: {percent}% ({resetIn})",
   "separator": " | ",
   "displayMode": "all",
@@ -50,10 +76,17 @@ Create `.opencode/ag-quota.json` (project-local) or `~/.config/opencode/ag-quota
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `quotaSource` | `"cloud"` \| `"local"` \| `"auto"` | `"auto"` | Where to fetch quota data from |
 | `format` | string | `"{category}: {percent}% ({resetIn})"` | Format string applied per category |
 | `separator` | string | `" \| "` | Separator between categories when `displayMode` is `all` |
-| `displayMode` | `"all"` \| `"current"` | `"all"` | Show all quotas, or only the current model’s quota |
-| `alwaysAppend` | boolean | `true` | Append an "Unavailable" line when quota can’t be read |
+| `displayMode` | `"all"` \| `"current"` | `"all"` | Show all quotas, or only the current model's quota |
+| `alwaysAppend` | boolean | `true` | Append an "Unavailable" line when quota can't be read |
+
+### Quota Sources
+
+- `cloud` - Fetch from Google Cloud Code API (requires `opencode auth login`)
+- `local` - Fetch from local Windsurf/Antigravity language server process
+- `auto` - Try cloud first, fallback to local (default, recommended)
 
 ### Format Placeholders
 
@@ -72,49 +105,83 @@ npx ag-quota
 ```
 
 ```
-Antigravity Quotas (Retrieved at: 10:34:53 PM):
+Antigravity Quotas (Source: Cloud API, 10:34:53 PM):
 ------------------------------------------------------------
-Claude/GPT/OSS      :  14.7% remaining (Resets in: 3h 58m)
-Gemini Flash        :  81.8% remaining (Resets in: 3h 34m)
-Gemini Pro          :  45.3% remaining (Resets in: 55m)
+Claude/GPT          :  83.3% remaining (Resets in: 3h 58m)
+Flash               : 100.0% remaining (Resets in: 3h 34m)
+Pro                 :  95.0% remaining (Resets in: 55m)
 ```
 
+### CLI Options
+
 ```bash
-npx ag-quota --json
+ag-quota --help
+```
+
+```
+Usage: ag-quota [options]
+
+Options:
+  --source=<cloud|local|auto>  Quota source (default: auto)
+  -s=<cloud|local|auto>        Alias for --source
+  --json                       Output result as JSON
+  -h, --help                   Show this help message
+```
+
+### Examples
+
+```bash
+ag-quota                     # Auto-detect source
+ag-quota --source=cloud      # Force cloud source
+ag-quota --source=local      # Force local source
+ag-quota --json              # Output as JSON
+```
+
+### JSON Output
+
+```bash
+ag-quota --json
 ```
 
 ```json
 {
+  "source": "cloud",
   "timestamp": 1767735298099,
   "categories": [
     {
-      "name": "Claude/GPT/OSS",
-      "remainingFraction": 0.14666666,
-      "remainingPercentage": 14.7,
-      "resetTime": "2026-01-07T01:33:34Z",
+      "name": "Claude/GPT",
+      "remainingFraction": 0.833,
+      "remainingPercentage": 83.3,
+      "resetTime": "2026-01-07T13:20:23.000Z",
       "resetsIn": "3h 58m"
     },
     {
-      "name": "Gemini Pro",
-      "remainingFraction": 0.453125,
-      "remainingPercentage": 45.3,
-      "resetTime": "2026-01-06T22:30:14Z",
-      "resetsIn": "55m"
+      "name": "Flash",
+      "remainingFraction": 1.0,
+      "remainingPercentage": 100.0,
+      "resetTime": "2026-01-07T13:32:12.000Z",
+      "resetsIn": "4h 10m"
     },
     {
-      "name": "Gemini Flash",
-      "remainingFraction": 0.8175,
-      "remainingPercentage": 81.8,
-      "resetTime": "2026-01-07T01:09:14Z",
-      "resetsIn": "3h 34m"
+      "name": "Pro",
+      "remainingFraction": 0.95,
+      "remainingPercentage": 95.0,
+      "resetTime": "2026-01-07T13:13:23.000Z",
+      "resetsIn": "3h 51m"
     }
   ]
 }
 ```
 
-## Credits
+## Acknowledgments
 
-Discovery logic inspired by `ag-usage`.
+This project builds upon the excellent work of:
+
+- **[opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth)** by [@NoeFabris](https://github.com/NoeFabris) - OAuth authentication and Cloud Code API integration for Opencode
+- **[vscode-antigravity-cockpit](https://github.com/jlcodes99/vscode-antigravity-cockpit)** by [@jlcodes99](https://github.com/jlcodes99) - VSCode extension that inspired the cloud quota fetching approach
+- **ag-usage** - Discovery logic for local language server
+
+The cloud quota fetching implementation uses the same OAuth credentials and API endpoints as documented in these projects.
 
 ## License
 
@@ -127,16 +194,30 @@ MIT
 Install dependencies:
 
 ```bash
-npm install
+bun install
 ```
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| `npm run build` | Compiles TypeScript to JavaScript (`dist/`). |
-| `npm run dev` | Runs in watch mode for development. |
-| `npm run lint` | Runs ESLint and Prettier checks. |
-| `npm run lint:fix` | Auto-fixes linting and formatting errors. |
-| `npm test` | Runs all tests using Vitest. |
-| `npm run typecheck` | Runs `tsc --noEmit` to verify types. |
+| `bun run build` | Compiles TypeScript to JavaScript (`dist/`). |
+| `bun run test` | Runs all tests using Vitest. |
+| `bun run typecheck` | Runs `tsc --noEmit` to verify types. |
+
+### Project Structure
+
+```
+packages/
+├── ag-quota/              # Core library and CLI
+│   ├── src/
+│   │   ├── index.ts       # Main exports, unified quota fetching
+│   │   ├── cloud.ts       # Cloud Code API client
+│   │   ├── config.ts      # Configuration handling
+│   │   └── cli.ts         # CLI tool
+│   └── package.json
+└── opencode-ag-quota/     # Opencode TUI plugin
+    ├── src/
+    │   └── plugin.ts      # Plugin implementation
+    └── package.json
+```

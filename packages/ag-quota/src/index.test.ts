@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { fetchAntigravityStatus, type ShellRunner } from "./index.js";
-import * as http from "node:http";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+
+vi.mock("node:http");
+vi.mock("node:https");
 
 describe("fetchAntigravityStatus", () => {
     it("should fetch status correctly when discovery succeeds", async () => {
@@ -42,17 +46,18 @@ describe("fetchAntigravityStatus", () => {
             }),
         };
 
-        const requestSpy = vi.spyOn(http, "request").mockImplementation((options, callback) => {
-            if (callback) callback(mockRes as any);
-            return mockReq as any;
-        });
+        const mockImpl = (options: any, callback: any) => {
+            if (callback) callback(mockRes);
+            return mockReq;
+        };
+
+        vi.mocked(httpRequest).mockImplementation(mockImpl as any);
+        vi.mocked(httpsRequest).mockImplementation(mockImpl as any);
 
         const result = await fetchAntigravityStatus(shellRunner);
 
         expect(result.userStatus).toEqual(mockResponse.userStatus);
         expect(shellRunner).toHaveBeenCalledWith(expect.stringContaining("ps aux"));
-        
-        requestSpy.mockRestore();
     });
 
     it("should throw error when CSRF token is not found", async () => {

@@ -1,19 +1,19 @@
 /*
-ISC License
+ ISC License
 
-Copyright (c) 2025, Cristian Militaru
+ Copyright (c) 2025, Cristian Militaru
 
-Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted, provided that the above
-copyright notice and this permission notice appear in all copies.
+ Permission to use, copy, modify, and/or distribute this software for any
+ purpose with or without fee is hereby granted, provided that the above
+ copyright notice and this permission notice appear in all copies.
 
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
 import * as http from "node:http";
@@ -222,4 +222,158 @@ export {
     formatQuotaEntry,
     DEFAULT_CONFIG,
     type QuotaConfig,
+    type QuotaSource,
 } from "./config";
+
+// Re-export cloud utilities
+export {
+    fetchCloudQuota,
+    type CloudQuotaResult,
+    type CloudAccountInfo,
+} from "./cloud";
+
+// ============================================================================
+// Unified Quota Types and Functions
+// ============================================================================
+
+/**
+ * Unified category quota info (for the three model groups)
+ */
+export interface CategoryQuota {
+    category: "Flash" | "Pro" | "Claude/GPT";
+    remainingFraction: number;
+    resetTime: Date | null;
+}
+
+/**
+ * Unified quota result from either source
+ */
+export interface UnifiedQuotaResult {
+    source: "cloud" | "local";
+    categories: CategoryQuota[];
+    models: ModelConfig[];
+    timestamp: number;
+}
+
+/**
+ * Credentials for cloud quota fetching
+ */
+export interface CloudAuthCredentials {
+    accessToken: string;
+    projectId?: string;
+}
+
+/**
+ * Categorize a model label into one of the three groups.
+ */
+export function categorizeModel(label: string): "Flash" | "Pro" | "Claude/GPT" {
+    const lowerLabel = label.toLowerCase();
+    if (lowerLabel.includes("flash")) {
+        return "Flash";
+    }
+    if (lowerLabel.includes("gemini") || lowerLabel.includes("pro")) {
+        return "Pro";
+    }
+    return "Claude/GPT";
+}
+
+/**
+ * Group models into the three categories, taking the minimum quota per category.
+ */
+export function groupModelsByCategory(models: ModelConfig[]): CategoryQuota[] {
+    const categories: Record<
+        string,
+        { remainingFraction: number; resetTime: Date | null }
+    > = {};
+
+    for (const model of models) {
+        const label = model.label || model.modelName || "";
+        const category = categorizeModel(label);
+        const fraction = model.quotaInfo?.remainingFraction ?? 0;
+        const resetTime = model.quotaInfo?.resetTime
+            ? new Date(model.quotaInfo.resetTime)
+            : null;
+
+        if (
+            !categories[category] ||
+            fraction < categories[category].remainingFraction
+        ) {
+            categories[category] = { remainingFraction: fraction, resetTime };
+        }
+    }
+
+    const result: CategoryQuota[] = [];
+    for (const cat of ["Flash", "Pro", "Claude/GPT"] as const) {
+        if (categories[cat]) {
+            result.push({
+                category: cat,
+                remainingFraction: categories[cat].remainingFraction,
+                resetTime: categories[cat].resetTime,
+            });
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Fetch quota from either cloud or local source.
+ *
+ * @param source - "cloud", "local", or "auto" (try cloud first, fallback to local)
+ * @param shellRunner - Required for local source
+ * @param cloudAuth - Required for cloud source
+ * @returns Unified quota result
+ */
+export async function fetchQuota(
+    source: "cloud" | "local" | "auto",
+    shellRunner?: ShellRunner,
+    cloudAuth?: CloudAuthCredentials,
+): Promise<UnifiedQuotaResult> {
+    // Import cloud module dynamically to avoid issues if not available
+    const { fetchCloudQuota } = await import("./cloud");
+
+    if (source === "cloud" || source === "auto") {
+        // Try cloud first
+        if (cloudAuth) {
+            try {
+                const cloudResult = await fetchCloudQuota(
+                    cloudAuth.accessToken,
+                    cloudAuth.projectId,
+                );
+                const categories = groupModelsByCategory(cloudResult.models);
+                return {
+                    source: "cloud",
+                    categories,
+                    models: cloudResult.models,
+                    timestamp: cloudResult.timestamp,
+                };
+            } catch (error) {
+                if (source === "cloud") {
+                    throw error; // Don't fallback if explicitly requested cloud
+                }
+                // Fall through to local if auto
+            }
+        } else if (source === "cloud") {
+            throw new Error(
+                "Cloud access token not provided. Cannot fetch cloud quota.",
+            );
+        }
+    }
+
+    // Try local
+    if (!shellRunner) {
+        throw new Error("Shell runner required for local quota fetching");
+    }
+
+    const localResult = await fetchAntigravityStatus(shellRunner);
+    const models: ModelConfig[] =
+        localResult.userStatus.cascadeModelConfigData?.clientModelConfigs || [];
+    const categories = groupModelsByCategory(models);
+
+    return {
+        source: "local",
+        categories,
+        models,
+        timestamp: localResult.timestamp,
+    };
+}
