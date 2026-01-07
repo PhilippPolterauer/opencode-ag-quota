@@ -17,27 +17,49 @@
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
  * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
+ * ACTION, ARISING OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 import { type Plugin } from "@opencode-ai/plugin";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
-    fetchAntigravityStatus,
+    fetchQuota,
     formatRelativeTime,
     formatAbsoluteTime,
     loadConfig,
     formatQuotaEntry,
     type ShellRunner,
+    type UnifiedQuotaResult,
+    type CategoryQuota,
 } from "ag-quota";
+import { getCloudCredentials, hasCloudCredentials } from "./auth";
 
 const RETRY_INTERVAL_MS = 10000;
 const MAX_RETRIES = 3;
+const LOG_FILE = "/tmp/opencode-quota-debug.log";
+const DEFAULT_MARKER = "--- AG Quota ---";
+
+/**
+ * Debug logger - writes to a file to understand hook behavior
+ */
+function debugLog(message: string): void {
+    try {
+        const timestamp = new Date().toISOString();
+        const logLine = `[${timestamp}] ${message}\n`;
+        fs.appendFileSync(LOG_FILE, logLine);
+    } catch {
+        // Ignore logging errors
+    }
+}
 
 export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
     // Load configuration
     const config = loadConfig(directory);
+    const marker = config.quotaMarker || DEFAULT_MARKER;
 
     // Use Bun's $ shell helper from opencode
     const shellRunner: ShellRunner = async (cmd: string) => {
@@ -50,14 +72,73 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
     };
 
     // Connection state
-    let isConnected = false;
-    let retryCount = 0;
-    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+    interface PluginState {
+        data: UnifiedQuotaResult | null;
+        lastAlertLevel: number; // Start at 1.0 (100%)
+        isConnected: boolean;
+        currentSource: "cloud" | "local" | null;
+        retryCount: number;
+    }
 
-    // Try to connect to the language server with retries
+    let quotaState: PluginState = {
+        data: null,
+        lastAlertLevel: 1.0,
+        isConnected: false,
+        currentSource: null,
+        retryCount: 0
+    };
+
+    // Track processed messages to prevent duplicate quota appending
+    const processedMessages = new Map<string, number>();
+    const MAX_PROCESSED_MESSAGES = 100;
+    const UPDATE_THROTTLE_MS = 5000;
+
+    /**
+     * Mark a message as processed and clean up old entries to prevent memory leaks
+     */
+    const markMessageProcessed = (messageKey: string): void => {
+        processedMessages.set(messageKey, Date.now());
+        // Clean up oldest entries if we exceed the limit
+        if (processedMessages.size > MAX_PROCESSED_MESSAGES) {
+            const firstKey = processedMessages.keys().next().value;
+            if (firstKey !== undefined) {
+                processedMessages.delete(firstKey);
+            }
+        }
+    };
+
+    /**
+     * Helper to append or replace the quota message
+     */
+    const updateQuotaMessage = (
+        currentText: string,
+        newContent: string,
+    ): string => {
+        const fullMessage = `\n\n> AG Quota: ${newContent}`;
+        if (currentText.includes("> AG Quota:")) {
+            // Replace existing quota message
+            // Match: \n\n> AG Quota: ...
+            const regex = /\n\n> AG Quota: .*/;
+            return currentText.replace(regex, fullMessage);
+        }
+        return currentText + fullMessage;
+    };
+
+    // Try to connect with the configured source
     const tryConnect = async (): Promise<boolean> => {
         try {
-            await fetchAntigravityStatus(shellRunner);
+            let cloudAuth;
+            if (config.quotaSource !== "local") {
+                try {
+                    cloudAuth = await getCloudCredentials();
+                } catch {
+                    // If cloud auth fails but source is auto, we'll continue to local
+                    if (config.quotaSource === "cloud") throw new Error("Cloud auth failed");
+                }
+            }
+
+            const result = await fetchQuota(config.quotaSource, shellRunner, cloudAuth);
+            quotaState.currentSource = result.source;
             return true;
         } catch {
             return false;
@@ -68,37 +149,39 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
     const startConnectionChecker = () => {
         const check = async () => {
             const connected = await tryConnect();
-            
-            if (connected && !isConnected) {
+
+            if (connected && !quotaState.isConnected) {
                 // Just became connected
-                isConnected = true;
-                retryCount = 0;
+                quotaState.isConnected = true;
+                quotaState.retryCount = 0;
+                const sourceLabel = quotaState.currentSource === "cloud" ? "Cloud API" : "Language Server";
                 client.tui.showToast({
                     body: {
                         title: "Quota Connected",
-                        message: "Language Server connection established",
+                        message: `Connected via ${sourceLabel}`,
                         variant: "success",
                     },
                 });
-            } else if (!connected && isConnected) {
+            } else if (!connected && quotaState.isConnected) {
                 // Just became disconnected
-                isConnected = false;
+                quotaState.isConnected = false;
+                quotaState.currentSource = null;
                 client.tui.showToast({
                     body: {
                         title: "Quota Disconnected",
-                        message: "Language Server connection lost",
+                        message: "Quota connection lost",
                         variant: "warning",
                     },
                 });
-            } else if (!connected && !isConnected) {
+            } else if (!connected && !quotaState.isConnected) {
                 // Still not connected, retry
-                retryCount++;
-                if (retryCount <= MAX_RETRIES) {
-                    retryTimeout = setTimeout(check, RETRY_INTERVAL_MS);
+                quotaState.retryCount++;
+                if (quotaState.retryCount <= MAX_RETRIES) {
+                    setTimeout(check, RETRY_INTERVAL_MS);
                 }
             }
         };
-        
+
         // Initial check
         check();
     };
@@ -108,12 +191,27 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
 
     return {
         "experimental.text.complete": async (input, output) => {
-            try {
-                const { sessionID, messageID } = input;
+            const { sessionID, messageID } = input;
+            const messageKey = `${sessionID}-${messageID}`;
+            const textLength = output.text.length;
+            const textPreview = output.text.slice(-100).replace(/\n/g, "\\n");
 
+            debugLog(`HOOK FIRED: messageKey=${messageKey}`);
+            debugLog(`  textLength=${textLength}`);
+            debugLog(`  textPreview (last 100 chars): "${textPreview}"`);
+
+            // Check throttle for updates
+            const lastProcessed = processedMessages.get(messageKey);
+            if (lastProcessed && Date.now() - lastProcessed < UPDATE_THROTTLE_MS) {
+                debugLog(`  SKIPPING: throttled`);
+                return;
+            }
+
+            try {
                 const messageResp = await client.session.message({
                     path: { id: sessionID, messageID: messageID },
                 });
+
 
                 if (
                     !messageResp.data?.info ||
@@ -123,6 +221,7 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                 }
 
                 const modelID = messageResp.data.info.modelID || "";
+                debugLog(`  modelID from session: "${modelID}"`);
 
                 // Only fire for Google/Antigravity models
                 if (
@@ -133,20 +232,33 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                 }
 
                 // If not connected, show unavailable
-                if (!isConnected) {
+                if (!quotaState.isConnected) {
                     if (config.alwaysAppend) {
-                        output.text += `\n\n---\n*Quota: unavailable*`;
+                        const hint = hasCloudCredentials()
+                            ? "quota source unavailable"
+                            : "run 'opencode auth login' first";
+                        output.text = updateQuotaMessage(output.text, hint);
+                        markMessageProcessed(messageKey);
                     }
                     return;
                 }
 
-                let userStatus;
+                let quotaResult: UnifiedQuotaResult;
                 try {
-                    const result = await fetchAntigravityStatus(shellRunner);
-                    userStatus = result.userStatus;
+                    let cloudAuth;
+                    // Try to get updated cloud credentials for the fetch
+                    if (config.quotaSource !== "local") {
+                        try {
+                            cloudAuth = await getCloudCredentials();
+                        } catch {
+                            // Ignore error, will fallback if auto or fail if cloud
+                        }
+                    }
+                    quotaResult = await fetchQuota(config.quotaSource, shellRunner, cloudAuth);
                 } catch (error) {
                     // Unexpected error when we thought we were connected
-                    isConnected = false;
+                    quotaState.isConnected = false;
+                    quotaState.currentSource = null;
                     client.tui.showToast({
                         body: {
                             title: "Quota Fetch Failed",
@@ -155,36 +267,36 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                         },
                     });
                     // Restart connection checker
-                    retryCount = 0;
+                    quotaState.retryCount = 0;
                     startConnectionChecker();
-                    
+
                     if (config.alwaysAppend) {
-                        output.text += `\n\n---\n*Quota: error*`;
+                        output.text = updateQuotaMessage(output.text, "error");
+                        markMessageProcessed(messageKey);
                     }
                     return;
                 }
 
-                const modelConfigs =
-                    userStatus.cascadeModelConfigData?.clientModelConfigs || [];
-
                 if (config.displayMode === "current") {
                     // Show only current model's quota
-                    const currentConfig = modelConfigs.find(
+                    const currentModel = quotaResult.models.find(
                         (m) =>
                             m.modelName === modelID ||
-                            m.label?.toLowerCase().includes(modelID.toLowerCase()),
+                            modelID.includes(m.modelName) ||
+                            (m.label && modelID.toLowerCase().includes(m.label.toLowerCase())) ||
+                            (m.label && m.label.toLowerCase().includes(modelID.toLowerCase())),
                     );
 
-                    if (currentConfig?.quotaInfo) {
-                        const fraction = currentConfig.quotaInfo.remainingFraction;
+                    if (currentModel?.quotaInfo) {
+                        const fraction = currentModel.quotaInfo.remainingFraction;
                         const percent = (
                             typeof fraction === "number" && Number.isFinite(fraction)
                                 ? fraction * 100
                                 : 0
                         ).toFixed(1);
 
-                        const resetDate = currentConfig.quotaInfo.resetTime
-                            ? new Date(currentConfig.quotaInfo.resetTime)
+                        const resetDate = currentModel.quotaInfo.resetTime
+                            ? new Date(currentModel.quotaInfo.resetTime)
                             : null;
 
                         const formatted = formatQuotaEntry(config.format, {
@@ -195,76 +307,48 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                             model: modelID,
                         });
 
-                        output.text += `\n\n---\n*Quota: ${formatted}*`;
+                        output.text = updateQuotaMessage(output.text, formatted);
+                        markMessageProcessed(messageKey);
                     } else if (config.alwaysAppend) {
-                        output.text += `\n\n---\n*Quota: unknown*`;
+                        output.text = updateQuotaMessage(output.text, "unknown");
+                        markMessageProcessed(messageKey);
                     }
                 } else {
-                    // Show all quota categories
-                    const categories: Record<
-                        string,
-                        { quota: number; resetTime: string | null; label: string }
-                    > = {};
-
-                    for (const model of modelConfigs) {
-                        const label = model.label || model.modelName || "";
-                        const lowerLabel = label.toLowerCase();
-
-                        // Determine category
-                        let category: string;
-                        if (lowerLabel.includes("flash")) {
-                            category = "Flash";
-                        } else if (lowerLabel.includes("gemini")) {
-                            category = "Pro";
-                        } else {
-                            category = "Claude/GPT";
-                        }
-
-                        const fraction = model.quotaInfo?.remainingFraction;
-                        const quota =
-                            typeof fraction === "number" && Number.isFinite(fraction)
-                                ? fraction
-                                : 0;
-
-                        if (!categories[category] || quota < categories[category].quota) {
-                            categories[category] = {
-                                quota,
-                                resetTime: model.quotaInfo?.resetTime || null,
-                                label: category,
-                            };
-                        }
-                    }
-
-                    // Build display string with all categories
+                    // Show all quota categories (using the unified categories)
                     const parts: string[] = [];
-                    for (const [name, data] of Object.entries(categories).sort((a, b) =>
-                        a[0].localeCompare(b[0]),
-                    )) {
-                        const percent = (data.quota * 100).toFixed(0);
-                        const resetDate = data.resetTime
-                            ? new Date(data.resetTime)
-                            : null;
+
+                    for (const cat of quotaResult.categories) {
+                        const percent = (cat.remainingFraction * 100).toFixed(0);
 
                         const formatted = formatQuotaEntry(config.format, {
-                            category: name,
+                            category: cat.category,
                             percent,
-                            resetIn: resetDate ? formatRelativeTime(resetDate) : null,
-                            resetAt: resetDate ? formatAbsoluteTime(resetDate) : null,
+                            resetIn: cat.resetTime ? formatRelativeTime(cat.resetTime) : null,
+                            resetAt: cat.resetTime ? formatAbsoluteTime(cat.resetTime) : null,
                             model: modelID,
                         });
                         parts.push(formatted);
                     }
 
                     if (parts.length > 0) {
-                        output.text += `\n\n---\n*Quota: ${parts.join(config.separator)}*`;
+                        debugLog(`  APPENDING quota for messageKey=${messageKey}`);
+                        output.text = updateQuotaMessage(
+                            output.text,
+                            parts.join(config.separator),
+                        );
+                        markMessageProcessed(messageKey);
                     } else if (config.alwaysAppend) {
-                        output.text += `\n\n---\n*Quota: unknown*`;
+                        debugLog(`  APPENDING unknown for messageKey=${messageKey}`);
+                        output.text = updateQuotaMessage(output.text, "unknown");
+                        markMessageProcessed(messageKey);
                     }
                 }
             } catch {
                 // Silently fail to avoid disrupting TUI
+                debugLog(`  CATCH: error occurred for messageKey=${messageKey}`);
                 if (config.alwaysAppend) {
-                    output.text += `\n\n---\n*Quota: error*`;
+                    output.text = updateQuotaMessage(output.text, "error");
+                    markMessageProcessed(messageKey);
                 }
             }
         },
