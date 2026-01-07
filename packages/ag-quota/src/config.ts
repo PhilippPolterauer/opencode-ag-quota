@@ -8,9 +8,26 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
+ * Quota data source
+ * - "cloud": Fetch from Cloud Code API (requires opencode-antigravity-auth)
+ * - "local": Fetch from local language server process
+ * - "auto": Try cloud first, fallback to local
+ */
+export type QuotaSource = "cloud" | "local" | "auto";
+
+/**
  * Configuration options for the quota plugin
  */
 export interface QuotaConfig {
+    /**
+     * Where to fetch quota data from.
+     * - "cloud": Use Cloud Code API (requires opencode-antigravity-auth)
+     * - "local": Use local language server process
+     * - "auto": Try cloud first, fallback to local (default)
+     * @default "auto"
+     */
+    quotaSource?: QuotaSource;
+
     /**
      * Format string for quota display.
      * Available placeholders:
@@ -42,13 +59,35 @@ export interface QuotaConfig {
      * @default true
      */
     alwaysAppend?: boolean;
+
+    /**
+     * The marker string used to separate quota info from the message
+     * @default "> AG Quota:"
+     */
+    quotaMarker?: string;
+
+    /**
+     * Polling interval in milliseconds
+     * @default 30000 (30 seconds)
+     */
+    pollingInterval?: number;
+
+    /**
+     * Array of quota usage percentages (remaining) that trigger alerts
+     * @default [0.2, 0.1, 0.05] (20%, 10%, 5%)
+     */
+    alertThresholds?: number[];
 }
 
 const DEFAULT_CONFIG: Required<QuotaConfig> = {
+    quotaSource: "auto",
     format: "{category}: {percent}% ({resetIn})",
     separator: " | ",
     displayMode: "all",
     alwaysAppend: true,
+    quotaMarker: "> AG Quota:",
+    pollingInterval: 30000,
+    alertThresholds: [0.2, 0.1, 0.05],
 };
 
 /**
@@ -66,8 +105,9 @@ export function loadConfig(projectDir?: string): Required<QuotaConfig> {
     // Project-local config
     if (projectDir) {
         paths.push(join(projectDir, ".opencode", "ag-quota.json"));
+    } else {
+        paths.push(join(process.cwd(), ".opencode", "ag-quota.json"));
     }
-    paths.push(join(process.cwd(), ".opencode", "ag-quota.json"));
 
     // User global config
     paths.push(join(homedir(), ".config", "opencode", "ag-quota.json"));

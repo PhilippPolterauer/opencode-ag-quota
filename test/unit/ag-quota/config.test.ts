@@ -23,6 +23,12 @@ describe("loadConfig", () => {
         expect(config).toEqual(DEFAULT_CONFIG);
     });
 
+    it("includes default alert thresholds and polling interval", () => {
+        const config = loadConfig("/nonexistent/path");
+        expect(config.alertThresholds).toEqual([0.2, 0.1, 0.05]);
+        expect(config.pollingInterval).toBe(30000);
+    });
+
     it("loads and merges project config", () => {
         const userConfig = {
             displayMode: "current" as const,
@@ -49,10 +55,12 @@ describe("loadConfig", () => {
 
     it("merges all config options", () => {
         const userConfig = {
+            quotaSource: "cloud" as const,
             format: "[{category}] {percent}%",
             separator: " · ",
             displayMode: "current" as const,
             alwaysAppend: false,
+            quotaMarker: "--- My Quota ---",
         };
         writeFileSync(
             join(configDir, "ag-quota.json"),
@@ -60,7 +68,26 @@ describe("loadConfig", () => {
         );
 
         const config = loadConfig(testDir);
-        expect(config).toEqual(userConfig);
+        expect(config).toEqual({
+            ...userConfig,
+            pollingInterval: 30000,
+            alertThresholds: [0.2, 0.1, 0.05],
+        });
+    });
+
+    it("accepts quotaSource config option", () => {
+        const userConfig = {
+            quotaSource: "local" as const,
+        };
+        writeFileSync(
+            join(configDir, "ag-quota.json"),
+            JSON.stringify(userConfig)
+        );
+
+        const config = loadConfig(testDir);
+        expect(config.quotaSource).toBe("local");
+        // Other defaults preserved
+        expect(config.format).toBe(DEFAULT_CONFIG.format);
     });
 });
 
