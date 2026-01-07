@@ -114,7 +114,7 @@ npx ag-quota --json
 
 ## Credits
 
-Discovery logic inspired by `ag-usage`.
+Discovery logic inspired by [`ag-usage`](https://github.com/crsmilitaru97/ag-usage).
 
 ## License
 
