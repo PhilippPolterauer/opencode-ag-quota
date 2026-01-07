@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     parseQuotaOutput,
     parseOpencodeJsonOutput,
@@ -7,16 +7,42 @@ import {
     hasSeparator,
 } from "../../helpers/parse-output";
 
+// Import QuotaPlugin for logic tests
+import QuotaPlugin from "../../../packages/opencode-ag-quota/src/plugin";
+import { fetchQuota } from "ag-quota";
+
+// Mock ag-quota
+vi.mock("ag-quota", () => ({
+    loadConfig: vi.fn(() => ({
+        quotaMarker: "> AG Quota:",
+        pollingInterval: 100000, // Long interval to avoid loops in test
+        quotaSource: "local",
+        alertThresholds: [0.1],
+        displayMode: "all",
+        alwaysAppend: true,
+        separator: " | ",
+        format: "{category}: {percent}% ({resetIn})",
+    })),
+    fetchQuota: vi.fn(),
+    formatRelativeTime: vi.fn(() => "1h"),
+    formatAbsoluteTime: vi.fn(() => "10:00 PM"),
+    formatQuotaEntry: vi.fn((fmt, data) => `${data.category}: ${data.percent}`),
+    categorizeModel: vi.fn(),
+    groupModelsByCategory: vi.fn(),
+}));
+
+// Mock auth
+vi.mock("../../../packages/opencode-ag-quota/src/auth", () => ({
+    getCloudCredentials: vi.fn(),
+    hasCloudCredentials: vi.fn(() => true),
+}));
+
 describe("parseQuotaOutput", () => {
     it("detects quota line presence", () => {
         const output = `Hello!
 
 
---- AG Quota ---
- AG Quota 
---- AG Quota ---
-
-*Flash: 88% (4h 16m) | Pro: 45% (1h 37m)*`;
+> AG Quota: Flash: 88% (4h 16m) | Pro: 45% (1h 37m)`;
 
         const result = parseQuotaOutput(output);
         expect(result.hasQuotaLine).toBe(true);
@@ -34,11 +60,7 @@ describe("parseQuotaOutput", () => {
         const output = `Hello!
 
 
---- AG Quota ---
- AG Quota 
---- AG Quota ---
-
-*antigravity language server not found*`;
+> AG Quota: antigravity language server not found`;
 
         const result = parseQuotaOutput(output);
         expect(result.hasQuotaLine).toBe(true);
@@ -50,11 +72,7 @@ describe("parseQuotaOutput", () => {
         const output = `Hello!
 
 
---- AG Quota ---
- AG Quota 
---- AG Quota ---
-
-*unknown*`;
+> AG Quota: unknown`;
 
         const result = parseQuotaOutput(output);
         expect(result.status).toBe("unknown");
@@ -64,11 +82,7 @@ describe("parseQuotaOutput", () => {
         const output = `Hello!
 
 
---- AG Quota ---
- AG Quota 
---- AG Quota ---
-
-*error*`;
+> AG Quota: error`;
 
         const result = parseQuotaOutput(output);
         expect(result.status).toBe("error");
@@ -78,11 +92,7 @@ describe("parseQuotaOutput", () => {
         const output = `Hello!
 
 
---- AG Quota ---
- AG Quota 
---- AG Quota ---
-
-*Claude/GPT: 93% (4h 41m) | Flash: 88% (4h 16m) | Pro: 45% (1h 37m)*`;
+> AG Quota: Claude/GPT: 93% (4h 41m) | Flash: 88% (4h 16m) | Pro: 45% (1h 37m)`;
 
         const result = parseQuotaOutput(output);
         expect(result.categories).toHaveLength(3);
@@ -108,11 +118,7 @@ describe("parseQuotaOutput", () => {
         const output = `Hello!
 
 
---- AG Quota ---
- AG Quota 
---- AG Quota ---
-
-*Flash: 88% | Pro: 45%*`;
+> AG Quota: Flash: 88% | Pro: 45%`;
 
         const result = parseQuotaOutput(output);
         expect(result.categories).toHaveLength(2);
@@ -124,11 +130,7 @@ describe("parseQuotaOutput", () => {
         const output = `Hello!
 
 
---- AG Quota ---
- AG Quota 
---- AG Quota ---
-
-*[Flash] 88% (4h 16m) · [Pro] 45% (1h 37m)*`;
+> AG Quota: [Flash] 88% (4h 16m) · [Pro] 45% (1h 37m)`;
 
         const result = parseQuotaOutput(output);
         expect(result.categories).toHaveLength(2);
@@ -140,11 +142,7 @@ describe("parseQuotaOutput", () => {
         const output = `Hello!
 
 
---- AG Quota ---
- AG Quota 
---- AG Quota ---
-
-*Current: 85.5%*`;
+> AG Quota: Current: 85.5%`;
 
         const result = parseQuotaOutput(output);
         expect(result.categories).toHaveLength(1);
@@ -155,11 +153,7 @@ describe("parseQuotaOutput", () => {
         const output = `Hello!
 
 
---- AG Quota ---
- AG Quota 
---- AG Quota ---
-
-*Flash: 5% 🔴 (4h 16m)*`;
+> AG Quota: Flash: 5% 🔴 (4h 16m)`;
 
         const result = parseQuotaOutput(output);
         expect(result.categories).toHaveLength(1);
@@ -238,5 +232,99 @@ describe("hasSeparator", () => {
 
     it("returns false when separator not found", () => {
         expect(hasSeparator("Flash: 88%", " | ")).toBe(false);
+    });
+});
+
+describe("QuotaPlugin Logic", () => {
+    let mockClient: any;
+    let mockDirectory: string;
+    let mockShell: any;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockClient = {
+            tui: { showToast: vi.fn() },
+            session: { message: vi.fn() },
+        };
+        mockDirectory = "/tmp";
+        mockShell = vi.fn();
+    });
+
+    it("uses cached data and does not fetch on message hook", async () => {
+        // Setup initial quota data
+        const mockQuotaData = {
+            source: "local",
+            categories: [
+                { category: "Flash", remainingFraction: 0.5, resetTime: null }
+            ],
+            models: [],
+            timestamp: Date.now()
+        };
+        (fetchQuota as any).mockResolvedValue(mockQuotaData);
+
+        // Instantiate plugin
+        const plugin = await QuotaPlugin({ client: mockClient, directory: mockDirectory, $: mockShell } as any);
+        
+        // Advance timers to trigger the first poll (if any async delay)
+        // Note: startPolling calls fetchQuota immediately (async) but without await in root
+        // So we need to wait for the promise to resolve.
+        await new Promise(resolve => setTimeout(resolve, 0));
+        
+        // fetchQuota is called twice: once in tryConnect and once in startPolling
+        expect(fetchQuota).toHaveBeenCalledTimes(2); 
+
+        // Now call the hook
+        const hook = plugin["experimental.text.complete"];
+        const input = { sessionID: "1", messageID: "1", partID: "1" };
+        const output = { text: "Hello" };
+
+        mockClient.session.message.mockResolvedValue({
+            data: { info: { role: "assistant", modelID: "google/gemini-pro" } }
+        });
+
+        if (hook) {
+            await hook(input, output);
+        }
+
+        // Should use cached data, so fetchQuota should NOT be called again
+        expect(fetchQuota).toHaveBeenCalledTimes(2);
+        
+        // Check output modification
+        // We mocked formatQuotaEntry to return "Category: Percent"
+        // Flash: 50%
+        expect(output.text).toContain("> AG Quota: Flash: 50%");
+    });
+
+    it("shows red dot when quota is low (< 10%)", async () => {
+         const mockQuotaData = {
+            source: "local",
+            categories: [
+                { category: "Flash", remainingFraction: 0.05, resetTime: null }
+            ],
+            models: [],
+            timestamp: Date.now()
+        };
+        (fetchQuota as any).mockResolvedValue(mockQuotaData);
+
+        const plugin = await QuotaPlugin({ client: mockClient, directory: mockDirectory, $: mockShell } as any);
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const hook = plugin["experimental.text.complete"];
+        const input = { sessionID: "2", messageID: "2", partID: "1" };
+        const output = { text: "Hello" };
+
+        mockClient.session.message.mockResolvedValue({
+            data: { info: { role: "assistant", modelID: "google/gemini-pro" } }
+        });
+
+        if (hook) {
+            await hook(input, output);
+        }
+        
+        // Check for red dot in output
+        // The displayPercent logic adds 🔴 if < 0.1
+        // formatQuotaEntry mock returns "Category: Percent"
+        // So we expect "Flash: 5% 🔴"
+        expect(output.text).toContain("Flash: 5% 🔴");
     });
 });

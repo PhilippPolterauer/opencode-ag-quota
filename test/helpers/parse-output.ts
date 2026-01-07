@@ -24,8 +24,8 @@ export function parseQuotaOutput(output: string): ParsedQuotaOutput {
         status: null,
     };
 
-    // Match the quota line pattern: --- AG Quota ---\n*...*
-    const quotaMatch = output.match(/--- AG Quota ---\s*\n\*([^*]+)\*/);
+    // Match the quota line pattern: > AG Quota: ...
+    const quotaMatch = output.match(/> AG Quota: (.*)/);
     if (!quotaMatch) {
         return result;
     }
