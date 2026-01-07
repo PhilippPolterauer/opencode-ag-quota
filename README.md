@@ -119,3 +119,24 @@ Discovery logic inspired by `ag-usage`.
 ## License
 
 MIT
+
+## Development
+
+### Setup
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run build` | Compiles TypeScript to JavaScript (`dist/`). |
+| `npm run dev` | Runs in watch mode for development. |
+| `npm run lint` | Runs ESLint and Prettier checks. |
+| `npm run lint:fix` | Auto-fixes linting and formatting errors. |
+| `npm test` | Runs all tests using Vitest. |
+| `npm run typecheck` | Runs `tsc --noEmit` to verify types. |
