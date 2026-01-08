@@ -1,6 +1,12 @@
 # opencode-ag-quota
 
-Opencode plugin to display Antigravity/Windsurf quota usage in the Opencode TUI.
+Opencode plugin that shows your **Antigravity quota** inside the Opencode TUI.
+
+## TL;DR
+
+- Installs as an Opencode plugin (`"opencode-ag-quota"`).
+- **Antigravity-only for now** (quota is shown only when the model ID contains `antigravity`).
+- Cloud mode uses `opencode auth login` credentials (auth/API approach based on [`opencode-antigravity-auth`](https://github.com/NoeFabris/opencode-antigravity-auth)).
 
 ## Installation
 
@@ -12,12 +18,16 @@ Add the plugin to your Opencode config (`opencode.json`):
 }
 ```
 
-## Quota Display Configuration
+## Configuration
 
-Create `.opencode/ag-quota.json` (project-local) or `~/.config/opencode/ag-quota.json` (global).
+Zero-config by default. Customize via:
+
+- Project: `.opencode/ag-quota.json`
+- Global: `~/.config/opencode/ag-quota.json`
 
 ```json
 {
+  "quotaSource": "auto",
   "format": "{category}: {percent}% ({resetIn})",
   "separator": " | ",
   "displayMode": "all",
@@ -29,30 +39,15 @@ Create `.opencode/ag-quota.json` (project-local) or `~/.config/opencode/ag-quota
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `format` | string | `"{category}: {percent}% ({resetIn})"` | Format string applied per category |
-| `separator` | string | `" \| "` | Separator between categories when `displayMode` is `all` |
-| `displayMode` | `"all"` \| `"current"` | `"all"` | Show all quotas, or only the current model’s quota |
-| `alwaysAppend` | boolean | `true` | Append an "Unavailable" line when quota can’t be read |
+| `quotaSource` | `"auto" \| "cloud" \| "local"` | `"auto"` | `auto` tries cloud first, falls back to local. |
+| `format` | `string` | `"{category}: {percent}% ({resetIn})"` | Placeholders: `{category}`, `{percent}`, `{resetIn}`, `{resetAt}`, `{model}`. |
+| `separator` | `string` | `" | "` | Separator when `displayMode` is `all`. |
+| `displayMode` | `"all" \| "current"` | `"all"` | Show all quotas or only the current model's quota. |
+| `alwaysAppend` | `boolean` | `true` | Show an "Unavailable" hint when quota can't be read. |
 
-### Format Placeholders
+## Disclaimer
 
-- `{category}` - Category name (Flash, Pro, Claude/GPT)
-- `{percent}` - Quota percentage (e.g., "85.5")
-- `{resetIn}` - Relative time until reset (e.g., "2h 30m")
-- `{resetAt}` - Absolute reset time (e.g., "10:30 PM")
-- `{model}` - Current model ID
-
-### Example Formats
-
-- Minimal: `"{category}: {percent}%"`
-- With relative time: `"{category}: {percent}% ({resetIn})"`
-- With absolute time: `"{category}: {percent}% (resets at {resetAt})"`
-- Both: `"{category}: {percent}% ({resetIn} / {resetAt})"`
-
-## Requirements
-
-- Opencode
-- Windsurf/Codeium Language Server running and authenticated (this plugin reads from the local server)
+This is an independent, third-party plugin for Opencode. It is not affiliated with, endorsed by, or maintained by the Opencode developers.
 
 ## License
 

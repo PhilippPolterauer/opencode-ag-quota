@@ -17,11 +17,15 @@ vi.mock("ag-quota", () => ({
         quotaMarker: "> AG Quota:",
         pollingInterval: 100000, // Long interval to avoid loops in test
         quotaSource: "local",
-        alertThresholds: [0.1],
+        alertThresholds: [0.2, 0.1, 0.05],
         displayMode: "all",
         alwaysAppend: true,
         separator: " | ",
         format: "{category}: {percent}% ({resetIn})",
+        indicators: [
+            { threshold: 0.2, symbol: "⚠️" },
+            { threshold: 0.05, symbol: "🛑" },
+        ],
     })),
     fetchQuota: vi.fn(),
     formatRelativeTime: vi.fn(() => "1h"),
@@ -244,13 +248,16 @@ describe("QuotaPlugin Logic", () => {
         vi.clearAllMocks();
         mockClient = {
             tui: { showToast: vi.fn() },
-            session: { message: vi.fn() },
+            session: { 
+                message: vi.fn(),
+                messages: vi.fn(),
+            },
         };
         mockDirectory = "/tmp";
         mockShell = vi.fn();
     });
 
-    it("uses cached data and does not fetch on message hook", async () => {
+    it("uses cached data and shows toast on session.idle", async () => {
         // Setup initial quota data
         const mockQuotaData = {
             source: "local",
@@ -262,40 +269,62 @@ describe("QuotaPlugin Logic", () => {
         };
         (fetchQuota as any).mockResolvedValue(mockQuotaData);
 
+        // Mock session.messages to return an antigravity model
+        mockClient.session.messages.mockResolvedValue({
+            data: [
+                {
+                    info: {
+                        id: "msg1",
+                        sessionID: "session1",
+                        role: "assistant",
+                        modelID: "antigravity-gemini-2.5-pro",
+                        providerID: "google",
+                        time: { created: Date.now() }
+                    },
+                    parts: []
+                }
+            ]
+        });
+
         // Instantiate plugin
         const plugin = await QuotaPlugin({ client: mockClient, directory: mockDirectory, $: mockShell } as any);
         
-        // Advance timers to trigger the first poll (if any async delay)
-        // Note: startPolling calls fetchQuota immediately (async) but without await in root
-        // So we need to wait for the promise to resolve.
+        // Wait for startPolling to execute
         await new Promise(resolve => setTimeout(resolve, 0));
         
         // fetchQuota is called once in startPolling (which calls tryConnect)
         expect(fetchQuota).toHaveBeenCalledTimes(1); 
 
-        // Now call the hook
-        const hook = plugin["experimental.text.complete"];
-        const input = { sessionID: "1", messageID: "1", partID: "1" };
-        const output = { text: "Hello" };
+        // Get the event hook
+        const eventHook = plugin.event;
+        expect(eventHook).toBeDefined();
 
-        mockClient.session.message.mockResolvedValue({
-            data: { info: { role: "assistant", modelID: "google/gemini-pro" } }
+        // Clear toast calls from connection toast
+        mockClient.tui.showToast.mockClear();
+
+        // Simulate session.idle event - plugin will fetch messages to get last model
+        await eventHook!({
+            event: {
+                type: "session.idle",
+                properties: { sessionID: "session1" }
+            }
         });
-
-        if (hook) {
-            await hook(input, output);
-        }
 
         // Should use cached data, so fetchQuota should NOT be called again
         expect(fetchQuota).toHaveBeenCalledTimes(1);
         
-        // Check output modification
-        // We mocked formatQuotaEntry to return "Category: Percent"
-        // Flash: 50%
-        expect(output.text).toContain("> AG Quota: Flash: 50%");
+        // Check that toast was shown with quota info
+        expect(mockClient.tui.showToast).toHaveBeenCalledWith(
+            expect.objectContaining({
+                body: expect.objectContaining({
+                    title: "AG Quota",
+                    variant: "info"
+                })
+            })
+        );
     });
 
-    it("shows red dot when quota is low (< 10%)", async () => {
+    it("shows red dot indicator in toast when quota is low (< 10%)", async () => {
          const mockQuotaData = {
             source: "local",
             categories: [
@@ -306,25 +335,139 @@ describe("QuotaPlugin Logic", () => {
         };
         (fetchQuota as any).mockResolvedValue(mockQuotaData);
 
+        // Mock session.messages to return an antigravity model
+        mockClient.session.messages.mockResolvedValue({
+            data: [
+                {
+                    info: {
+                        id: "msg2",
+                        sessionID: "session2",
+                        role: "assistant",
+                        modelID: "antigravity-gemini-2.5-pro",
+                        providerID: "google",
+                        time: { created: Date.now() }
+                    },
+                    parts: []
+                }
+            ]
+        });
+
         const plugin = await QuotaPlugin({ client: mockClient, directory: mockDirectory, $: mockShell } as any);
         await new Promise(resolve => setTimeout(resolve, 0));
 
-        const hook = plugin["experimental.text.complete"];
-        const input = { sessionID: "2", messageID: "2", partID: "1" };
-        const output = { text: "Hello" };
+        const eventHook = plugin.event;
+        expect(eventHook).toBeDefined();
 
-        mockClient.session.message.mockResolvedValue({
-            data: { info: { role: "assistant", modelID: "google/gemini-pro" } }
+        // Clear toast calls from connection toast and alert
+        mockClient.tui.showToast.mockClear();
+
+        // Simulate session.idle event - plugin will fetch messages to get last model
+        await eventHook!({
+            event: {
+                type: "session.idle",
+                properties: { sessionID: "session2" }
+            }
         });
-
-        if (hook) {
-            await hook(input, output);
-        }
         
-        // Check for red dot in output
-        // The displayPercent logic adds 🔴 if < 0.1
-        // formatQuotaEntry mock returns "Category: Percent"
-        // So we expect "Flash: 5% 🔴"
-        expect(output.text).toContain("Flash: 5% 🔴");
+        // Check that toast was shown - the red dot indicator is added by buildQuotaSummary
+        // when remainingFraction < 0.1
+        expect(mockClient.tui.showToast).toHaveBeenCalledWith(
+            expect.objectContaining({
+                body: expect.objectContaining({
+                    title: "AG Quota",
+                    variant: "info"
+                })
+            })
+        );
+    });
+
+    it("fires toast alert when quota drops below lowest threshold", async () => {
+        // Set quota to 4% (remainingFraction = 0.04).
+        const mockQuotaData = {
+            source: "local" as const,
+            categories: [{ category: "Flash", remainingFraction: 0.04, resetTime: null }],
+            models: [
+                {
+                    modelName: "antigravity-gemini-2.5-flash",
+                    label: "Flash",
+                    quotaInfo: { remainingFraction: 0.04 },
+                },
+            ],
+            timestamp: Date.now(),
+        };
+        (fetchQuota as any).mockResolvedValue(mockQuotaData);
+
+        await QuotaPlugin({ client: mockClient, directory: mockDirectory, $: mockShell } as any);
+
+        // Wait for startPolling to execute (which calls checkAlerts)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        const toastCalls = mockClient.tui.showToast.mock.calls;
+
+        // Find the low quota warning toast
+        const alertToast = toastCalls.find((call: any) => call[0]?.body?.title === "Low Quota Warning");
+
+        expect(alertToast).toBeDefined();
+        // Expect the most critical threshold (5%) to be shown
+        expect(alertToast[0].body.message).toContain("Below 5% threshold");
+        // Uses buildQuotaSummary which adds the indicator symbol (🛑 for 4%)
+        expect(alertToast[0].body.message).toContain("Flash: 4% 🛑");
+        expect(alertToast[0].body.variant).toBe("warning");
+    });
+
+    it("does not fire alert when quota is above all thresholds", async () => {
+        // Set quota to 50% which is above the 0.1 (10%) threshold in our mock config
+        const mockQuotaData = {
+            source: "local" as const,
+            categories: [
+                { category: "Flash", remainingFraction: 0.5, resetTime: null }
+            ],
+            models: [],
+            timestamp: Date.now()
+        };
+        (fetchQuota as any).mockResolvedValue(mockQuotaData);
+
+        const plugin = await QuotaPlugin({ client: mockClient, directory: mockDirectory, $: mockShell } as any);
+        
+        // Wait for startPolling to execute
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        // Should only have the "AG Quota" toast, no low quota warning
+        const toastCalls = mockClient.tui.showToast.mock.calls;
+        
+        const alertToast = toastCalls.find((call: any) => 
+            call[0]?.body?.title === "Low Quota Warning"
+        );
+        
+        expect(alertToast).toBeUndefined();
+    });
+
+    it("includes model details in alert toast when available", async () => {
+        const mockQuotaData = {
+            source: "local" as const,
+            categories: [{ category: "Flash", remainingFraction: 0.05, resetTime: null }],
+            models: [
+                {
+                    modelName: "antigravity-gemini-2.5-flash",
+                    label: "Gemini 2.5 Flash",
+                    quotaInfo: { remainingFraction: 0.05 },
+                },
+            ],
+            timestamp: Date.now(),
+        };
+        (fetchQuota as any).mockResolvedValue(mockQuotaData);
+
+        await QuotaPlugin({ client: mockClient, directory: mockDirectory, $: mockShell } as any);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        const toastCalls = mockClient.tui.showToast.mock.calls;
+        const alertToast = toastCalls.find((call: any) => call[0]?.body?.title === "Low Quota Warning");
+
+        expect(alertToast).toBeDefined();
+        // Should trigger 5% threshold
+        expect(alertToast[0].body.message).toContain("Below 5% threshold");
+        // Refactored to use buildQuotaSummary (category-based)
+        expect(alertToast[0].body.message).toContain("Flash: 5% 🛑");
+        expect(alertToast[0].body.variant).toBe("warning");
     });
 });

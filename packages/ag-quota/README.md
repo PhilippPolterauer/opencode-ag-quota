@@ -1,6 +1,8 @@
 # ag-quota
 
-Antigravity quota fetching library and CLI for checking your Windsurf/Codeium quota usage.
+Antigravity quota fetching library + CLI to inspect your Antigravity quota usage.
+
+This package is **not** affiliated with or endorsed by Opencode. If you want the Opencode integration, install the plugin package `opencode-ag-quota` from this repo.
 
 ## Installation
 
@@ -8,19 +10,19 @@ Antigravity quota fetching library and CLI for checking your Windsurf/Codeium qu
 npm install -g ag-quota
 ```
 
-## CLI Usage
+## CLI
 
 ```bash
-# Display quotas (auto-detects source)
+# Auto mode (tries cloud first, falls back to local)
 ag-quota
 
-# Force cloud source
+# Force cloud source (uses opencode auth credentials)
 ag-quota --source=cloud
 
-# Force local source
+# Force local source (requires language server running)
 ag-quota --source=local
 
-# Output as JSON
+# JSON output for scripts
 ag-quota --json
 ```
 
@@ -34,57 +36,19 @@ Flash               : 100.0% remaining (Resets in: 3h 34m)
 Pro                 :  95.0% remaining (Resets in: 55m)
 ```
 
-### JSON Output
-
-```bash
-ag-quota --json
-```
-
-```json
-{
-  "source": "cloud",
-  "timestamp": 1767735298099,
-  "categories": [
-    {
-      "name": "Claude/GPT",
-      "remainingFraction": 0.833,
-      "remainingPercentage": 83.3,
-      "resetTime": "2026-01-07T13:20:23.000Z",
-      "resetsIn": "3h 58m"
-    },
-    {
-      "name": "Flash",
-      "remainingFraction": 1.0,
-      "remainingPercentage": 100.0,
-      "resetTime": "2026-01-07T13:32:12.000Z",
-      "resetsIn": "4h 10m"
-    },
-    {
-      "name": "Pro",
-      "remainingFraction": 0.95,
-      "remainingPercentage": 95.0,
-      "resetTime": "2026-01-07T13:13:23.000Z",
-      "resetsIn": "3h 51m"
-    }
-  ]
-}
-```
-
-## Library Usage
+## Library
 
 ### Unified Quota Fetching (Recommended)
 
-```typescript
-import { fetchQuota, type QuotaSource } from 'ag-quota';
+```ts
+import { fetchQuota } from "ag-quota";
 
-// For local source, provide a shell runner
 const shellRunner = async (cmd: string) => {
-  const { execSync } = await import('node:child_process');
+  const { execSync } = await import("node:child_process");
   return execSync(cmd).toString();
 };
 
-// Fetch quota (auto mode tries cloud first, falls back to local)
-const result = await fetchQuota('auto', shellRunner);
+const result = await fetchQuota("auto", shellRunner);
 
 console.log(`Source: ${result.source}`);
 for (const cat of result.categories) {
@@ -94,82 +58,51 @@ for (const cat of result.categories) {
 
 ### Cloud-Only Fetching
 
-```typescript
-import { fetchCloudQuota, hasCloudCredentials } from 'ag-quota';
+```ts
+import { fetchCloudQuota, hasCloudCredentials } from "ag-quota";
 
-if (hasCloudCredentials()) {
-  const result = await fetchCloudQuota();
+if (await hasCloudCredentials()) {
+  const token = process.env.AG_ACCESS_TOKEN;
+  const projectId = process.env.AG_PROJECT_ID;
+  if (!token) throw new Error("Set AG_ACCESS_TOKEN");
+
+  const result = await fetchCloudQuota(token, projectId);
   console.log(`Account: ${result.account.email}`);
-  for (const model of result.models) {
-    const quota = model.quotaInfo?.remainingFraction ?? 0;
-    console.log(`${model.label}: ${(quota * 100).toFixed(1)}%`);
-  }
 }
 ```
 
 ### Local Server Fetching
 
-```typescript
-import { fetchAntigravityStatus, formatRelativeTime } from 'ag-quota';
+```ts
+import { fetchAntigravityStatus } from "ag-quota";
 
 const shellRunner = async (cmd: string) => {
-  const { execSync } = await import('node:child_process');
+  const { execSync } = await import("node:child_process");
   return execSync(cmd).toString();
 };
 
-const { userStatus, timestamp } = await fetchAntigravityStatus(shellRunner);
-
+const { userStatus } = await fetchAntigravityStatus(shellRunner);
 const configs = userStatus.cascadeModelConfigData?.clientModelConfigs || [];
 for (const model of configs) {
   const quota = model.quotaInfo?.remainingFraction ?? 0;
-  const resetTime = model.quotaInfo?.resetTime;
-  console.log(`${model.label}: ${(quota * 100).toFixed(1)}%`);
+  console.log(`${model.label ?? model.modelName}: ${(quota * 100).toFixed(1)}%`);
 }
 ```
 
-## Configuration
+## Plugin Configuration Notes
 
-Create a config file at `.opencode/ag-quota.json` or `~/.config/opencode/ag-quota.json`:
+The CLI/library does not read Opencode config files. The Opencode plugin reads:
 
-```json
-{
-  "quotaSource": "auto",
-  "format": "{category}: {percent}% ({resetIn})",
-  "separator": " | ",
-  "displayMode": "all",
-  "alwaysAppend": true
-}
-```
+- Project: `.opencode/ag-quota.json`
+- Global: `~/.config/opencode/ag-quota.json`
 
-### Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `quotaSource` | `"cloud"` \| `"local"` \| `"auto"` | `"auto"` | Where to fetch quota data from |
-| `format` | string | `"{category}: {percent}% ({resetIn})"` | Format string with placeholders |
-| `separator` | string | `" \| "` | Separator between categories |
-| `displayMode` | `"all"` \| `"current"` | `"all"` | Show all quotas or only current model |
-| `alwaysAppend` | boolean | `true` | Always show quota info even when unavailable |
-
-### Quota Sources
-
-- `cloud` - Fetch from Google Cloud Code API (requires `opencode auth login`)
-- `local` - Fetch from local Windsurf/Antigravity language server process
-- `auto` - Try cloud first, fallback to local (default, recommended)
-
-### Format Placeholders
-
-- `{category}` - Category name (Flash, Pro, Claude/GPT)
-- `{percent}` - Quota percentage (e.g., "85.5")
-- `{resetIn}` - Relative time until reset (e.g., "2h 30m")
-- `{resetAt}` - Absolute reset time (e.g., "10:30 PM")
-- `{model}` - Current model ID
+See the repo root `README.md` for plugin configuration, and the full defaults in `ag-quota.json`.
 
 ## Requirements
 
 - Node.js >= 18
-- For cloud mode: `opencode auth login` (via [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth))
-- For local mode: Windsurf/Codeium Language Server running
+- Cloud mode: `opencode auth login` credentials available
+- Local mode: Antigravity language server running
 
 ## Acknowledgments
 

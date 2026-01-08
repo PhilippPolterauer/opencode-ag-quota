@@ -24,8 +24,6 @@
  */
 
 import { type Plugin } from "@opencode-ai/plugin";
-import { appendFile } from "node:fs/promises";
-import * as path from "node:path";
 import {
     fetchQuota,
     formatRelativeTime,
@@ -34,32 +32,12 @@ import {
     formatQuotaEntry,
     type ShellRunner,
     type UnifiedQuotaResult,
-    type CategoryQuota,
 } from "ag-quota";
-import { getCloudCredentials, hasCloudCredentials } from "./auth";
-
-const RETRY_INTERVAL_MS = 10000;
-const MAX_RETRIES = 3;
-const LOG_FILE = "/tmp/opencode-quota-debug.log";
-const DEFAULT_MARKER = "--- AG Quota ---";
-
-/**
- * Debug logger - writes to a file to understand hook behavior
- */
-async function debugLog(message: string): Promise<void> {
-    try {
-        const timestamp = new Date().toISOString();
-        const logLine = `[${timestamp}] ${message}\n`;
-        await appendFile(LOG_FILE, logLine);
-    } catch {
-        // Ignore logging errors
-    }
-}
+import { getCloudCredentials } from "./auth";
 
 export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
-    // Load configuration
+    // Load configuration (loadConfig always returns Required<QuotaConfig> with defaults)
     const config = await loadConfig(directory);
-    const marker = config.quotaMarker || DEFAULT_MARKER;
 
     // Use Bun's $ shell helper from opencode
     const shellRunner: ShellRunner = async (cmd: string) => {
@@ -77,8 +55,6 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
         lastAlertLevel: number; // Start at 1.0 (100%)
         isConnected: boolean;
         currentSource: "cloud" | "local" | null;
-        retryCount: number;
-        pendingConnectToast: boolean;
     }
 
     let quotaState: PluginState = {
@@ -86,49 +62,67 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
         lastAlertLevel: 1.0,
         isConnected: false,
         currentSource: null,
-        retryCount: 0,
-        pendingConnectToast: false,
     };
 
-    // Track processed messages to prevent duplicate quota appending
-    const processedMessages = new Map<string, number>();
-    const MAX_PROCESSED_MESSAGES = 100;
-    const UPDATE_THROTTLE_MS = 5000;
+    /**
+     * Check if a model ID is an Antigravity model (quota tracking applies).
+     */
+    const isAntigravityModel = (modelID: string): boolean => {
+        return modelID.toLowerCase().includes("antigravity");
+    };
 
     /**
-     * Mark a message as processed and clean up old entries to prevent memory leaks
+     * Get the last assistant message's model ID from a session
      */
-    const markMessageProcessed = (messageKey: string): void => {
-        processedMessages.set(messageKey, Date.now());
-        // Clean up oldest entries if we exceed the limit
-        if (processedMessages.size > MAX_PROCESSED_MESSAGES) {
-            const firstKey = processedMessages.keys().next().value;
-            if (firstKey !== undefined) {
-                processedMessages.delete(firstKey);
+    const getLastAssistantModelID = async (sessionID: string): Promise<string | null> => {
+        try {
+            const response = await client.session.messages({
+                path: { id: sessionID },
+                query: { limit: 10 }, // Get recent messages, we just need the last assistant one
+            });
+
+            if (!response.data) return null;
+
+            // Find the last assistant message (iterate in reverse)
+            for (let i = response.data.length - 1; i >= 0; i--) {
+                const msg = response.data[i];
+                if (msg.info.role === "assistant" && msg.info.modelID) {
+                    return msg.info.modelID;
+                }
+            }
+
+            return null;
+        } catch {
+            return null;
+        }
+    };
+
+    /**
+     * Get the indicator symbol for a given remaining fraction based on config.
+     */
+    const getIndicatorSymbol = (fraction: number): string => {
+        if (!config.indicators || config.indicators.length === 0) return "";
+        // Sort by threshold ascending to find the most severe (lowest threshold met)
+        const sorted = [...config.indicators].sort((a, b) => a.threshold - b.threshold);
+        for (const indicator of sorted) {
+            if (fraction <= indicator.threshold) {
+                return ` ${indicator.symbol}`;
             }
         }
+        return "";
     };
 
-    /**
-     * Helper to append or replace the quota message
-     */
-    const updateQuotaMessage = (
-        currentText: string,
-        newContent: string,
-    ): string => {
-        const fullMessage = `\n\n> AG Quota: ${newContent}`;
-        if (currentText.includes("> AG Quota:")) {
-            // Replace existing quota message
-            // Match: \n\n> AG Quota: ...
-            const regex = /\n\n> AG Quota: .*/;
-            return currentText.replace(regex, fullMessage);
-        }
-        return currentText + fullMessage;
-    };
+    const buildQuotaSummary = (quotaResult: UnifiedQuotaResult, modelID?: string, separator?: string): string => {
+        if (config.displayMode === "current" && modelID) {
+            // Find the model that matches the last used model
+            const currentModel = quotaResult.models.find(
+                (m) =>
+                    m.modelName === modelID ||
+                    modelID.includes(m.modelName) ||
+                    (m.label && modelID.toLowerCase().includes(m.label.toLowerCase())) ||
+                    (m.label && m.label.toLowerCase().includes(modelID.toLowerCase())),
+            );
 
-    const buildQuotaSummary = (quotaResult: UnifiedQuotaResult, separator?: string): string => {
-        if (config.displayMode === "current") {
-            const currentModel = quotaResult.models.find((model) => model.quotaInfo);
             if (currentModel?.quotaInfo) {
                 const fraction = currentModel.quotaInfo.remainingFraction;
                 const percent = (
@@ -139,9 +133,12 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                 const resetDate = currentModel.quotaInfo.resetTime
                     ? new Date(currentModel.quotaInfo.resetTime)
                     : null;
+
+                const displayPercent = `${percent}%${getIndicatorSymbol(fraction)}`;
+
                 return formatQuotaEntry(config.format, {
                     category: "Current",
-                    percent: `${percent}%`,
+                    percent: displayPercent,
                     resetIn: resetDate ? formatRelativeTime(resetDate) : null,
                     resetAt: resetDate ? formatAbsoluteTime(resetDate) : null,
                     model: currentModel.modelName,
@@ -152,89 +149,19 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
         const parts: string[] = [];
         for (const cat of quotaResult.categories) {
             const percent = (cat.remainingFraction * 100).toFixed(0);
-            const formatted = formatQuotaEntry(config.format, {
-                category: cat.category,
-                percent: `${percent}%`,
-                resetIn: cat.resetTime ? formatRelativeTime(cat.resetTime) : null,
-                resetAt: cat.resetTime ? formatAbsoluteTime(cat.resetTime) : null,
-                model: "current",
-            });
-            parts.push(formatted);
-        }
-        return parts.join(separator ?? config.separator);
-    };
-
-    /**
-     * Format a short quota summary for toasts.
-     */
-    const formatQuotaSummary = (quota: UnifiedQuotaResult): string => {
-        if (config.displayMode === "current") {
-            const currentModel = quota.models.find((model) => model.quotaInfo);
-            if (currentModel?.quotaInfo) {
-                const fraction = currentModel.quotaInfo.remainingFraction;
-                const percent = (
-                    typeof fraction === "number" && Number.isFinite(fraction)
-                        ? fraction * 100
-                        : 0
-                ).toFixed(1);
-                const resetDate = currentModel.quotaInfo.resetTime
-                    ? new Date(currentModel.quotaInfo.resetTime)
-                    : null;
-                return formatQuotaEntry(config.format, {
-                    category: "Current",
-                    percent: `${percent}%`,
-                    resetIn: resetDate ? formatRelativeTime(resetDate) : null,
-                    resetAt: resetDate ? formatAbsoluteTime(resetDate) : null,
-                    model: currentModel.modelName,
-                });
-            }
-        }
-
-        const parts: string[] = [];
-
-        for (const cat of quota.categories) {
-            const percent = (cat.remainingFraction * 100).toFixed(0);
-            const displayPercent =
-                cat.remainingFraction < 0.1 ? `${percent}% 🔴` : `${percent}%`;
+            const displayPercent = `${percent}%${getIndicatorSymbol(cat.remainingFraction)}`;
 
             const formatted = formatQuotaEntry(config.format, {
                 category: cat.category,
                 percent: displayPercent,
                 resetIn: cat.resetTime ? formatRelativeTime(cat.resetTime) : null,
                 resetAt: cat.resetTime ? formatAbsoluteTime(cat.resetTime) : null,
-                model: "",
+                model: modelID ?? "current",
             });
             parts.push(formatted);
         }
-
-        if (parts.length > 0) {
-            return parts.join(config.separator);
-        }
-
-        const fallbackModel = quota.models.find((model) => model.quotaInfo);
-        if (fallbackModel?.quotaInfo) {
-            const fraction = fallbackModel.quotaInfo.remainingFraction;
-            const percent = (
-                typeof fraction === "number" && Number.isFinite(fraction)
-                    ? fraction * 100
-                    : 0
-            ).toFixed(1);
-            return formatQuotaEntry(config.format, {
-                category: "Current",
-                percent: `${percent}%`,
-                resetIn: fallbackModel.quotaInfo.resetTime
-                    ? formatRelativeTime(new Date(fallbackModel.quotaInfo.resetTime))
-                    : null,
-                resetAt: fallbackModel.quotaInfo.resetTime
-                    ? formatAbsoluteTime(new Date(fallbackModel.quotaInfo.resetTime))
-                    : null,
-                model: fallbackModel.modelName,
-            });
-        }
-
-        return "unknown";
+        return parts.join(separator ?? config.separator);
     };
-
 
     // Try to connect with the configured source
     const tryConnect = async (): Promise<UnifiedQuotaResult | null> => {
@@ -257,8 +184,6 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
         }
     };
 
-
-
     /**
      * Check if we need to alert the user about low quota
      */
@@ -273,16 +198,20 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
             }
         }
 
-        // Check against thresholds (descending order)
-        const thresholds = [...config.alertThresholds].sort((a, b) => b - a);
+        // Check against thresholds (ascending order).
+        // We want to show the most severe (lowest) warning once when crossing multiple levels.
+        const thresholds = [...config.alertThresholds].sort((a, b) => a - b);
 
         for (const threshold of thresholds) {
             // If we dropped below this threshold AND haven't alerted for it yet
             if (minFraction <= threshold && quotaState.lastAlertLevel > threshold) {
+                // Use buildQuotaSummary for consistent formatting across all toasts
+                const summary = buildQuotaSummary(quotaState.data, undefined, "\n");
+
                 client.tui.showToast({
                     body: {
                         title: "Low Quota Warning",
-                        message: `One or more categories are below ${(threshold * 100).toFixed(0)}% remaining`,
+                        message: `Below ${(threshold * 100).toFixed(0)}% threshold.\n\n${summary}`,
                         variant: "warning",
                     },
                 });
@@ -293,10 +222,6 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
 
         // If quota went back up (reset), reset alert level
         if (minFraction > quotaState.lastAlertLevel) {
-            // Find the highest threshold we are now above
-            // Actually, simply setting it to the current fraction or 1.0 is fine?
-            // Safer: set it to 1.0 so we re-alert on next drop
-            // Or better: set it to the next threshold above current fraction
             quotaState.lastAlertLevel = 1.0;
         }
     };
@@ -313,10 +238,10 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
                 // Just became connected
                 quotaState.isConnected = true;
                 const sourceLabel = quotaState.currentSource === "cloud" ? "Cloud API" : "Language Server";
-                const summary = buildQuotaSummary(result, "\n") || "unknown";
+                const summary = buildQuotaSummary(result, undefined, "\n") || "unknown";
                 client.tui.showToast({
                     body: {
-                        title: "Quota Connected",
+                        title: "AG Quota",
                         message: `Connected via ${sourceLabel}.\n${summary}`,
                         variant: "success",
                     },
@@ -349,128 +274,34 @@ export const QuotaPlugin: Plugin = async ({ client, directory, $ }) => {
     startPolling();
 
     return {
-        "experimental.text.complete": async (input, output) => {
-            const { sessionID, messageID } = input;
-            const messageKey = `${sessionID}-${messageID}`;
-            
-            // Check throttle for updates (we still throttle updates to the message content to avoid spamming regex)
-            const lastProcessed = processedMessages.get(messageKey);
-            if (lastProcessed && Date.now() - lastProcessed < UPDATE_THROTTLE_MS) {
-                return;
-            }
+        event: async ({ event }) => {
+            // On session.idle, show quota toast if an Antigravity model was used
+            if (event.type === "session.idle") {
+                const { sessionID } = event.properties;
 
-            try {
-                const messageResp = await client.session.message({
-                    path: { id: sessionID, messageID: messageID },
-                });
+                // Get the last assistant message's model ID from the session
+                const lastModelID = await getLastAssistantModelID(sessionID);
 
-                if (
-                    !messageResp.data?.info ||
-                    messageResp.data.info.role !== "assistant"
-                ) {
+                // Only show quota for Antigravity models (model ID contains "antigravity")
+                if (!lastModelID || !isAntigravityModel(lastModelID)) {
                     return;
                 }
 
-                const modelID = messageResp.data.info.modelID || "";
-
-                // Only fire for Google/Antigravity models
-                if (
-                    !modelID.toLowerCase().includes("google") &&
-                    !modelID.toLowerCase().includes("gemini")
-                ) {
-                    return;
-                }
-
-                // If not connected or no data, show unavailable or previous state
+                // Check if we have quota data
                 if (!quotaState.isConnected || !quotaState.data) {
-                    if (config.alwaysAppend) {
-                        const hint = (await hasCloudCredentials())
-                            ? "quota source unavailable"
-                            : "run 'opencode auth login' first";
-                        output.text = updateQuotaMessage(output.text, hint);
-                        markMessageProcessed(messageKey);
-                    }
                     return;
                 }
 
-                // Use cached data
-                const quotaResult = quotaState.data;
-
-                if (config.displayMode === "current") {
-                    // Show only current model's quota
-                    const currentModel = quotaResult.models.find(
-                        (m) =>
-                            m.modelName === modelID ||
-                            modelID.includes(m.modelName) ||
-                            (m.label && modelID.toLowerCase().includes(m.label.toLowerCase())) ||
-                            (m.label && m.label.toLowerCase().includes(modelID.toLowerCase())),
-                    );
-
-                    if (currentModel?.quotaInfo) {
-                        const fraction = currentModel.quotaInfo.remainingFraction;
-                        const percent = (
-                            typeof fraction === "number" && Number.isFinite(fraction)
-                                ? fraction * 100
-                                : 0
-                        ).toFixed(1);
-
-                        // Add red dot if low
-                        const displayPercent = fraction < 0.1 ? `${percent}% 🔴` : `${percent}%`;
-
-                        const resetDate = currentModel.quotaInfo.resetTime
-                            ? new Date(currentModel.quotaInfo.resetTime)
-                            : null;
-
-                        const formatted = formatQuotaEntry(config.format, {
-                            category: "Current",
-                            percent: displayPercent,
-                            resetIn: resetDate ? formatRelativeTime(resetDate) : null,
-                            resetAt: resetDate ? formatAbsoluteTime(resetDate) : null,
-                            model: modelID,
-                        });
-
-                        output.text = updateQuotaMessage(output.text, formatted);
-                        markMessageProcessed(messageKey);
-                    } else if (config.alwaysAppend) {
-                        output.text = updateQuotaMessage(output.text, "unknown");
-                        markMessageProcessed(messageKey);
-                    }
-                } else {
-                    // Show all quota categories (using the unified categories)
-                    const parts: string[] = [];
-
-                    for (const cat of quotaResult.categories) {
-                        const percent = (cat.remainingFraction * 100).toFixed(0);
-                        
-                        // Add red dot if low
-                        const displayPercent = cat.remainingFraction < 0.1 ? `${percent}% 🔴` : `${percent}%`;
-
-                        const formatted = formatQuotaEntry(config.format, {
-                            category: cat.category,
-                            percent: displayPercent,
-                            resetIn: cat.resetTime ? formatRelativeTime(cat.resetTime) : null,
-                            resetAt: cat.resetTime ? formatAbsoluteTime(cat.resetTime) : null,
-                            model: modelID,
-                        });
-                        parts.push(formatted);
-                    }
-
-                    if (parts.length > 0) {
-                        output.text = updateQuotaMessage(
-                            output.text,
-                            parts.join(config.separator),
-                        );
-                        markMessageProcessed(messageKey);
-                    } else if (config.alwaysAppend) {
-                        output.text = updateQuotaMessage(output.text, "unknown");
-                        markMessageProcessed(messageKey);
-                    }
-                }
-            } catch {
-                // Silently fail to avoid disrupting TUI
-                if (config.alwaysAppend) {
-                    output.text = updateQuotaMessage(output.text, "error");
-                    markMessageProcessed(messageKey);
+                // Build and show quota summary
+                const summary = buildQuotaSummary(quotaState.data, lastModelID, "\n");
+                if (summary) {
+                    client.tui.showToast({
+                        body: {
+                            title: "AG Quota",
+                            message: summary,
+                            variant: "info",
+                        },
+                    });
                 }
             }
         },

@@ -1,6 +1,6 @@
 {
   "name": "opencode-ag-quota",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Opencode plugin to display Antigravity/Windsurf quotas",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -45,7 +45,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "ag-quota": "^0.0.1"
+    "ag-quota": "^0.0.2"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.1.3",

@@ -6,6 +6,7 @@ node_modules/
 
 # Build output
 dist/
+packages/ag-quota/bin/
 
 # Logs and temporary files
 *.log

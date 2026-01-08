@@ -15,6 +15,11 @@ import { join } from "node:path";
  */
 export type QuotaSource = "cloud" | "local" | "auto";
 
+export interface QuotaIndicator {
+    threshold: number;
+    symbol: string;
+}
+
 /**
  * Configuration options for the quota plugin
  */
@@ -36,7 +41,7 @@ export interface QuotaConfig {
      * - {resetIn} - Relative time until reset (e.g., "2h 30m")
      * - {resetAt} - Absolute reset time (e.g., "10:30 PM")
      * - {model} - Current model ID
-     * 
+     *
      * For all quotas mode, the format is applied per category and joined with separator.
      * @default "{category}: {percent}% ({resetIn})"
      */
@@ -74,9 +79,20 @@ export interface QuotaConfig {
 
     /**
      * Array of quota usage percentages (remaining) that trigger alerts
-     * @default [0.2, 0.1, 0.05] (20%, 10%, 5%)
+     * @default [0.5, 0.1, 0.05] (50%, 10%, 5%)
      */
     alertThresholds?: number[];
+
+    /**
+     * Visual indicators appended to quota percentages when remaining fraction is low.
+     * The most severe matching indicator is chosen.
+     *
+     * Example: with indicators [{threshold: 0.1, symbol: "⚠️"}, {threshold: 0.05, symbol: "⛔"}]
+     * a remainingFraction of 0.04 will show "⛔".
+     *
+     * @default [{threshold: 0.1, symbol: "⚠️"}, {threshold: 0.05, symbol: "⛔"}]
+     */
+    indicators?: QuotaIndicator[];
 }
 
 const DEFAULT_CONFIG: Required<QuotaConfig> = {
@@ -87,7 +103,11 @@ const DEFAULT_CONFIG: Required<QuotaConfig> = {
     alwaysAppend: true,
     quotaMarker: "> AG Quota:",
     pollingInterval: 30000,
-    alertThresholds: [0.2, 0.1, 0.05],
+    alertThresholds: [0.5, 0.1, 0.05],
+    indicators: [
+        { threshold: 0.2, symbol: "⚠️" },
+        { threshold: 0.05, symbol: "🛑" },
+    ],
 };
 
 /**
@@ -95,7 +115,7 @@ const DEFAULT_CONFIG: Required<QuotaConfig> = {
  * Searches in order:
  * 1. .opencode/ag-quota.json (project-local)
  * 2. ~/.config/opencode/ag-quota.json (user global)
- * 
+ *
  * @param projectDir - The project directory to search from
  * @returns Merged configuration with defaults
  */

@@ -1,37 +1,70 @@
-# Opencode Quota Display Plugin
+# opencode-ag-quota
 
-Display your Antigravity (Windsurf/Codeium) quota directly in Opencode.
+Opencode plugin that shows your **Antigravity quota** inside the Opencode TUI.
+
+## TL;DR
+
+- Installs as an Opencode plugin (`"opencode-ag-quota"`).
+- **Antigravity-only for now** (quota is shown only when the model ID contains `antigravity`).
+- Cloud mode uses `opencode auth login` credentials (auth/API approach based on [`opencode-antigravity-auth`](https://github.com/NoeFabris/opencode-antigravity-auth)).
 
 ![Example](./docs/example.png)
 
-## Features
+## What It Does
 
-- **Real-time Quota Tracking**: Shows remaining usage for Flash, Pro, and Claude/GPT-4 models.
-- **Multiple Sources**: Fetches quota from local VSCode language server (if running) or Cloud Code API.
-- **Auto-Discovery**: Automatically finds and connects to the local Windsurf language server.
-- **Visual Alerts**: Highlights critically low quotas (below 10%) with a red indicator 🔴.
-- **Background Monitoring**: Efficient background polling (default 30s) prevents rate-limiting.
-- **Low Quota Notifications**: Sends toast alerts when quota drops below configurable thresholds (20%, 10%, 5%).
-- **Non-Intrusive**: Appends a clean footer to assistant messages without blocking generation.
+- Polls quota in the background (default `30s`).
+- Appends a compact footer to assistant messages using `quotaMarker` (default `> AG Quota:`).
+- Shows toasts when connecting/disconnecting and when quota drops below thresholds.
+
+## Limitations
+
+- Works only when the last-used `modelID` contains `antigravity`.
 
 ## Installation
 
-```bash
-opencode plugin add opencode-ag-quota
+Add the plugin to your Opencode config.
+
+### Project-local
+
+`./.opencode/opencode.json`
+
+```json
+{
+  "plugin": ["opencode-ag-quota"]
+}
+```
+
+### Global
+
+`~/.config/opencode/opencode.json`
+
+```json
+{
+  "plugin": ["opencode-ag-quota"]
+}
 ```
 
 ## Configuration
 
-The plugin is zero-config by default, but you can customize it via `.opencode/ag-quota.json` (project) or `~/.config/opencode/ag-quota.json` (global).
+Zero-config by default. Customize via:
 
-### Example Configuration
+- Project: `.opencode/ag-quota.json`
+- Global: `~/.config/opencode/ag-quota.json`
+
+### Example
 
 ```json
 {
   "quotaSource": "auto",
-  "format": "{category}: {percent}%",
-  "alertThresholds": [0.2, 0.1, 0.05],
+  "displayMode": "all",
+  "format": "{category}: {percent}% ({resetIn})",
+  "separator": " | ",
   "pollingInterval": 30000,
+  "alertThresholds": [0.5, 0.1, 0.05],
+  "indicators": [
+    { "threshold": 0.2, "symbol": "⚠️" },
+    { "threshold": 0.05, "symbol": "🛑" }
+  ],
   "quotaMarker": "> AG Quota:",
   "alwaysAppend": true
 }
@@ -41,34 +74,23 @@ The plugin is zero-config by default, but you can customize it via `.opencode/ag
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `quotaSource` | `"auto" \| "cloud" \| "local"` | `"auto"` | Where to fetch data. "auto" tries cloud first, falls back to local. |
-| `format` | `string` | `"{category}: {percent}% ({resetIn})"` | Format string for the display. Supports placeholders like `{category}`, `{percent}`, `{resetIn}`. |
-| `alertThresholds` | `number[]` | `[0.2, 0.1, 0.05]` | Percentages (0.0-1.0) to trigger warning toasts. |
-| `pollingInterval` | `number` | `30000` | How often to fetch quota in ms. |
+| `quotaSource` | `"auto" \| "cloud" \| "local"` | `"auto"` | `auto` tries cloud first, falls back to local. |
 | `displayMode` | `"all" \| "current"` | `"all"` | Show all categories or only the current model's quota. |
-| `alwaysAppend` | `boolean` | `true` | Append quota footer even if data is unavailable (shows "unknown" or "error"). |
+| `format` | `string` | `"{category}: {percent}% ({resetIn})"` | Placeholders: `{category}`, `{percent}`, `{resetIn}`, `{resetAt}`, `{model}`. |
+| `separator` | `string` | `" | "` | Separator when `displayMode="all"`. |
+| `pollingInterval` | `number` | `30000` | Poll interval in ms. |
+| `alertThresholds` | `number[]` | `[0.5, 0.1, 0.05]` | Remaining fraction thresholds that trigger warning toasts. |
+| `indicators` | `{ threshold: number; symbol: string }[]` | `[{threshold: 0.2, symbol: "⚠️"}, {threshold: 0.05, symbol: "🛑"}]` | Symbols appended when below threshold. |
+| `quotaMarker` | `string` | `"> AG Quota:"` | Prefix for the quota footer. |
+| `alwaysAppend` | `boolean` | `true` | Show an "Unavailable" hint when quota can't be read. |
 
-## CLI Tool
+## Disclaimer
 
-This package also includes a standalone CLI tool `ag-quota` for checking usage from the terminal.
+This is an independent, third-party plugin for Opencode. It is not affiliated with, endorsed by, or maintained by the Opencode developers.
 
-```bash
-# Install globally or run via bun/npx
-bun x ag-quota
+## CLI / Library (ag-quota)
 
-# Output JSON for scripts
-bun x ag-quota --json
-```
-
-## Acknowledgments
-
-This project builds upon the excellent work of:
-
-- **[opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth)** by [@NoeFabris](https://github.com/NoeFabris) - OAuth authentication and Cloud Code API integration for Opencode
-- **[vscode-antigravity-cockpit](https://github.com/jlcodes99/vscode-antigravity-cockpit)** by [@jlcodes99](https://github.com/jlcodes99) - VSCode extension that inspired the cloud quota fetching approach
-- **ag-usage** - Discovery logic for local language server
-
-The cloud quota fetching implementation uses the same OAuth credentials and API endpoints as documented in these projects.
+This repo also contains `ag-quota` (TS library + CLI). See [`packages/ag-quota/README.md`](./packages/ag-quota/README.md).
 
 ## License
 

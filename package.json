@@ -1,25 +1,22 @@
 {
-  "name": "opencode-quota-display",
-  "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
-  "scripts": {
-    "build": "bun run --filter '*' build",
-    "typecheck": "bun run --filter '*' typecheck",
-    "test": "vitest",
-    "test:unit": "vitest run test/unit",
-    "test:integration": "bun test/integration/run-tests.ts",
-    "test:all": "bun run test:unit && bun run test:integration",
-    "ag-quota": "bun packages/ag-quota/src/cli.ts",
-    "mock-server": "bun src/mock-ag-server.ts --csrf_token mock-csrf-token-12345 --extension_server_port 46367"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.9.3",
-    "vitest": "^4.0.16"
-  },
-  "dependencies": {
-    "ag-quota": "^0.0.1"
-  }
+    "name": "opencode-quota-packages",
+    "private": true,
+    "workspaces": [
+        "packages/*"
+    ],
+    "scripts": {
+        "build": "bun run --filter '*' build",
+        "typecheck": "bun run --filter '*' typecheck",
+        "test": "vitest",
+        "test:unit": "vitest run test/unit",
+        "test:integration": "bun test/integration/run-tests.ts",
+        "test:all": "bun run test:unit && bun run test:integration",
+        "ag-quota": "bun packages/ag-quota/src/cli.ts",
+        "mock-server": "bun src/mock-ag-server.ts --csrf_token mock-csrf-token-12345 --extension_server_port 46367"
+    },
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "typescript": "^5.9.3",
+        "vitest": "^4.0.16"
+    }
 }

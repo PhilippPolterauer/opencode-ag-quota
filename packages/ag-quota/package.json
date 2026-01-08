@@ -1,6 +1,6 @@
 {
   "name": "ag-quota",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Antigravity quota fetching library and CLI",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

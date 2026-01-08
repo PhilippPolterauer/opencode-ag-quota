@@ -25,7 +25,7 @@ describe("loadConfig", () => {
 
     it("includes default alert thresholds and polling interval", async () => {
         const config = await loadConfig("/nonexistent/path");
-        expect(config.alertThresholds).toEqual([0.2, 0.1, 0.05]);
+        expect(config.alertThresholds).toEqual([0.5, 0.1, 0.05]);
         expect(config.pollingInterval).toBe(30000);
     });
 
@@ -71,7 +71,11 @@ describe("loadConfig", () => {
         expect(config).toEqual({
             ...userConfig,
             pollingInterval: 30000,
-            alertThresholds: [0.2, 0.1, 0.05],
+            alertThresholds: [0.5, 0.1, 0.05],
+            indicators: [
+                { threshold: 0.2, symbol: "⚠️" },
+                { threshold: 0.05, symbol: "🛑" },
+            ],
         });
     });
 
@@ -88,6 +92,67 @@ describe("loadConfig", () => {
         expect(config.quotaSource).toBe("local");
         // Other defaults preserved
         expect(config.format).toBe(DEFAULT_CONFIG.format);
+    });
+
+    it("loads custom alertThresholds from config", async () => {
+        const userConfig = {
+            alertThresholds: [0.5, 0.25, 0.1],
+        };
+        writeFileSync(
+            join(configDir, "ag-quota.json"),
+            JSON.stringify(userConfig)
+        );
+
+        const config = await loadConfig(testDir);
+        expect(config.alertThresholds).toEqual([0.5, 0.25, 0.1]);
+        // Other defaults preserved
+        expect(config.pollingInterval).toBe(DEFAULT_CONFIG.pollingInterval);
+    });
+
+    it("loads custom pollingInterval from config", async () => {
+        const userConfig = {
+            pollingInterval: 60000,
+        };
+        writeFileSync(
+            join(configDir, "ag-quota.json"),
+            JSON.stringify(userConfig)
+        );
+
+        const config = await loadConfig(testDir);
+        expect(config.pollingInterval).toBe(60000);
+        // Other defaults preserved
+        expect(config.alertThresholds).toEqual(DEFAULT_CONFIG.alertThresholds);
+    });
+
+    it("loads both alertThresholds and pollingInterval together", async () => {
+        const userConfig = {
+            alertThresholds: [0.3, 0.15],
+            pollingInterval: 15000,
+        };
+        writeFileSync(
+            join(configDir, "ag-quota.json"),
+            JSON.stringify(userConfig)
+        );
+
+        const config = await loadConfig(testDir);
+        expect(config.alertThresholds).toEqual([0.3, 0.15]);
+        expect(config.pollingInterval).toBe(15000);
+        // Other defaults preserved
+        expect(config.format).toBe(DEFAULT_CONFIG.format);
+        expect(config.displayMode).toBe(DEFAULT_CONFIG.displayMode);
+    });
+
+    it("allows empty alertThresholds array", async () => {
+        const userConfig = {
+            alertThresholds: [],
+        };
+        writeFileSync(
+            join(configDir, "ag-quota.json"),
+            JSON.stringify(userConfig)
+        );
+
+        const config = await loadConfig(testDir);
+        expect(config.alertThresholds).toEqual([]);
     });
 });
 
