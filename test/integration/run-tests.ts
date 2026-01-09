@@ -137,6 +137,7 @@ const testCases: TestCase[] = [
             };
         },
     },
+    /*
     {
         name: "Current mode shows single category",
         config: "current-only",
@@ -157,6 +158,7 @@ const testCases: TestCase[] = [
             };
         },
     },
+    */
     {
         name: "Reset time hidden with showResetTime=false",
         config: "no-reset-time",

@@ -24,23 +24,11 @@ Opencode plugin that shows your **Antigravity quota** inside the Opencode TUI.
 
 Add the plugin to your Opencode config.
 
-### Project-local
-
-`./.opencode/opencode.json`
+`./.opencode/opencode.json` (project) or `~/.config/opencode/opencode.json` (global).
 
 ```json
 {
-  "plugin": ["opencode-ag-quota"]
-}
-```
-
-### Global
-
-`~/.config/opencode/opencode.json`
-
-```json
-{
-  "plugin": ["opencode-ag-quota"]
+    "plugin": ["opencode-antigravity-auth", "opencode-ag-quota"]
 }
 ```
 
@@ -55,34 +43,34 @@ Zero-config by default. Customize via:
 
 ```json
 {
-  "quotaSource": "auto",
-  "displayMode": "all",
-  "format": "{category}: {percent}% ({resetIn})",
-  "separator": " | ",
-  "pollingInterval": 30000,
-  "alertThresholds": [0.5, 0.1, 0.05],
-  "indicators": [
-    { "threshold": 0.2, "symbol": "⚠️" },
-    { "threshold": 0.05, "symbol": "🛑" }
-  ],
-  "quotaMarker": "> AG Quota:",
-  "alwaysAppend": true
+    "quotaSource": "auto",
+    "displayMode": "all",
+    "format": "{category}: {percent}% ({resetIn})",
+    "separator": " | ",
+    "pollingInterval": 30000,
+    "alertThresholds": [0.5, 0.1, 0.05],
+    "indicators": [
+        { "threshold": 0.2, "symbol": "⚠️" },
+        { "threshold": 0.05, "symbol": "🛑" }
+    ],
+    "quotaMarker": "> AG Quota:",
+    "alwaysAppend": true
 }
 ```
 
 ### Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `quotaSource` | `"auto" \| "cloud" \| "local"` | `"auto"` | `auto` tries cloud first, falls back to local. |
-| `displayMode` | `"all" \| "current"` | `"all"` | Show all categories or only the current model's quota. |
-| `format` | `string` | `"{category}: {percent}% ({resetIn})"` | Placeholders: `{category}`, `{percent}`, `{resetIn}`, `{resetAt}`, `{model}`. |
-| `separator` | `string` | `" | "` | Separator when `displayMode="all"`. |
-| `pollingInterval` | `number` | `30000` | Poll interval in ms. |
-| `alertThresholds` | `number[]` | `[0.5, 0.1, 0.05]` | Remaining fraction thresholds that trigger warning toasts. |
-| `indicators` | `{ threshold: number; symbol: string }[]` | `[{threshold: 0.2, symbol: "⚠️"}, {threshold: 0.05, symbol: "🛑"}]` | Symbols appended when below threshold. |
-| `quotaMarker` | `string` | `"> AG Quota:"` | Prefix for the quota footer. |
-| `alwaysAppend` | `boolean` | `true` | Show an "Unavailable" hint when quota can't be read. |
+| Option            | Type                                      | Default                                                             | Description                                                                   |
+| ----------------- | ----------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------- |
+| `quotaSource`     | `"auto" \| "cloud" \| "local"`            | `"auto"`                                                            | `auto` tries cloud first, falls back to local.                                |
+| `displayMode`     | `"all" \| "current"`                      | `"all"`                                                             | Show all categories or only the current model's quota.                        |
+| `format`          | `string`                                  | `"{category}: {percent}% ({resetIn})"`                              | Placeholders: `{category}`, `{percent}`, `{resetIn}`, `{resetAt}`, `{model}`. |
+| `separator`       | `string`                                  | `"                                                                  | "`                                                                            | Separator when `displayMode="all"`. |
+| `pollingInterval` | `number`                                  | `30000`                                                             | Poll interval in ms.                                                          |
+| `alertThresholds` | `number[]`                                | `[0.5, 0.1, 0.05]`                                                  | Remaining fraction thresholds that trigger warning toasts.                    |
+| `indicators`      | `{ threshold: number; symbol: string }[]` | `[{threshold: 0.2, symbol: "⚠️"}, {threshold: 0.05, symbol: "🛑"}]` | Symbols appended when below threshold.                                        |
+| `quotaMarker`     | `string`                                  | `"> AG Quota:"`                                                     | Prefix for the quota footer.                                                  |
+| `alwaysAppend`    | `boolean`                                 | `true`                                                              | Show an "Unavailable" hint when quota can't be read.                          |
 
 ## Disclaimer
 

@@ -1,6 +1,6 @@
 {
     "dependencies": {
-        "@opencode-ai/plugin": "1.1.6",
+        "@opencode-ai/plugin": "1.1.8",
         "opencode-ag-quota": "../packages/opencode-ag-quota"
     }
 }

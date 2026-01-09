@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { resolve } from "path";
 
 export default defineConfig({
     test: {
@@ -6,5 +7,8 @@ export default defineConfig({
         exclude: ["node_modules", "dist", "test/integration"],
         testTimeout: 10000,
         globals: true,
+        alias: {
+            "ag-quota": resolve(__dirname, "packages/ag-quota/src/index.ts"),
+        },
     },
 });
