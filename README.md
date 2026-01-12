@@ -60,15 +60,15 @@ Zero-config by default. Customize via:
 
 ### Options
 
-| Option            | Type                                      | Default                                                             | Description                                                                   |
-| ----------------- | ----------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------- |
+| Option            | Type                                      | Default                                                             | Description                                                                   | 
+| ----------------- | ----------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `quotaSource`     | `"auto" \| "cloud" \| "local"`            | `"auto"`                                                            | `auto` tries cloud first, falls back to local.                                |
 | `displayMode`     | `"all" \| "current"`                      | `"all"`                                                             | Show all categories or only the current model's quota.                        |
 | `format`          | `string`                                  | `"{category}: {percent}% ({resetIn})"`                              | Placeholders: `{category}`, `{percent}`, `{resetIn}`, `{resetAt}`, `{model}`. |
-| `separator`       | `string`                                  | `"                                                                  | "`                                                                            | Separator when `displayMode="all"`. |
+| `separator`       | `string`                                  | `\|` | Separator when `displayMode="all"`.                         |
 | `pollingInterval` | `number`                                  | `30000`                                                             | Poll interval in ms.                                                          |
 | `alertThresholds` | `number[]`                                | `[0.5, 0.1, 0.05]`                                                  | Remaining fraction thresholds that trigger warning toasts.                    |
-| `indicators`      | `{ threshold: number; symbol: string }[]` | `[{threshold: 0.2, symbol: "⚠️"}, {threshold: 0.05, symbol: "🛑"}]` | Symbols appended when below threshold.                                        |
+| `indicators`      | `{ threshold: number; symbol: string }[]` | `[{threshold: 0.2, symbol: "⚠️"}, {threshold: 0.05, symbol: "🛑"}]` | Symbols appended when below threshold.                                       |
 | `quotaMarker`     | `string`                                  | `"> AG Quota:"`                                                     | Prefix for the quota footer.                                                  |
 | `alwaysAppend`    | `boolean`                                 | `true`                                                              | Show an "Unavailable" hint when quota can't be read.                          |
 
