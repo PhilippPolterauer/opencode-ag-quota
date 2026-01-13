@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> a better version is available at https://github.com/frieser/opencode-antigravity-quota, I suggest to use that instead. If you are interested in a more generic approach take a look at my package https://github.com/PhilippPolterauer/opencode-quotas.
+
 # opencode-ag-quota
 
 Opencode plugin that shows your **Antigravity quota** inside the Opencode TUI.
